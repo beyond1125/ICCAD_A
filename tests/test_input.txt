@@ -1,0 +1,4 @@
+This is the beginning of a new testcase. The case name is 'test8'
+Now please load file 'test8.v' in directory 'design/netlist/'
+What is the maximum logic depth from input in0 to output out3?
+Write out the current design to test8_out.v

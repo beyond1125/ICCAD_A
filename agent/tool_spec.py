@@ -1,0 +1,164 @@
+"""Tool definitions exposed to the LLM.
+
+EDA_TOOLS is the canonical list in OpenAI function-calling format.
+Use to_anthropic_tools() to get the equivalent Anthropic format.
+
+Add new tools here as the real EDA engine grows; the planner's dispatch
+table in planner.py must be updated in parallel.
+"""
+
+from typing import Any, Dict, List
+
+
+# ── canonical tool list (OpenAI format) ──────────────────────────────────────
+
+EDA_TOOLS: List[Dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "load_design",
+            "description": (
+                "Load a gate-level Verilog netlist from a file into the EDA engine. "
+                "Call this whenever the user asks to read, load, or import a design."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Path to the Verilog (.v) source file.",
+                    }
+                },
+                "required": ["filepath"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_design",
+            "description": (
+                "Write the current in-memory netlist to a gate-level Verilog file. "
+                "Call this when the user asks to output, save, or write a design."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Destination path for the output Verilog (.v) file.",
+                    }
+                },
+                "required": ["filepath"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_depth",
+            "description": (
+                "Compute the maximum combinational logic depth (critical-path length in "
+                "gate levels) from start_node to end_node. Returns the depth count and "
+                "an example longest path."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start_node": {
+                        "type": "string",
+                        "description": "Source signal name or primary input.",
+                    },
+                    "end_node": {
+                        "type": "string",
+                        "description": "Sink signal name or primary output.",
+                    },
+                },
+                "required": ["start_node", "end_node"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "find_paths",
+            "description": (
+                "Enumerate paths from start_node to end_node in the netlist, "
+                "optionally avoiding a specific intermediate node."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start_node": {
+                        "type": "string",
+                        "description": "Source signal name or primary input.",
+                    },
+                    "end_node": {
+                        "type": "string",
+                        "description": "Sink signal name or primary output.",
+                    },
+                    "avoid_node": {
+                        "type": "string",
+                        "description": "Optional node that no returned path may pass through.",
+                    },
+                },
+                "required": ["start_node", "end_node"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_node_info",
+            "description": (
+                "Retrieve structural information (type, fanin, fanout, driver) "
+                "about a specific signal, wire, or gate instance."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The signal or gate instance name to inspect.",
+                    }
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_nodes",
+            "description": (
+                "List all signal and gate nodes present in the currently loaded design."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+]
+
+
+# ── format conversion ─────────────────────────────────────────────────────────
+
+def to_anthropic_tools(openai_tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert an OpenAI-format tool list to Anthropic's tool schema format.
+
+    OpenAI uses  {"type": "function", "function": {"name": …, "parameters": …}}
+    Anthropic uses  {"name": …, "description": …, "input_schema": …}
+    """
+    result = []
+    for tool in openai_tools:
+        fn = tool["function"]
+        result.append(
+            {
+                "name": fn["name"],
+                "description": fn.get("description", ""),
+                "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+            }
+        )
+    return result
