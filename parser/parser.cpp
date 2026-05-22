@@ -21,16 +21,11 @@ void VerilogParser::parse(const std::string& filename, Graph& graph) {
 }
 
 std::string VerilogParser::strip_comments(const std::string& content) {
-    // Basic comment stripping (both // and /* */)
     std::string result = content;
     std::regex line_comment("//.*");
     result = std::regex_replace(result, line_comment, "");
-
-    // Multi-line comments: /* ... */
-    // Note: This regex might be slow on very large files, but is accurate.
     std::regex multi_line_comment("/\\*[^*]*\\*+([^/*][^*]*\\*+)*/");
     result = std::regex_replace(result, multi_line_comment, "");
-
     return result;
 }
 
@@ -72,14 +67,11 @@ std::vector<std::string> VerilogParser::expand_bus(const std::string& base, int 
 
 std::vector<std::string> VerilogParser::parse_signal_list(const std::string& list_str) {
     std::vector<std::string> signals;
-    // Matches: name, name[index], name[msb:lsb]
     std::regex sig_regex(R"(\w+(?:\[\d+(?::\d+)?\])?)");
     auto words_begin = std::sregex_iterator(list_str.begin(), list_str.end(), sig_regex);
     auto words_end = std::sregex_iterator();
-
     for (std::sregex_iterator i = words_begin; i != words_end; ++i) {
         std::string raw = (*i).str();
-        // If it's a bus range name[msb:lsb], expand it
         std::regex range_regex(R"((\w+)\s*\[(\d+):(\d+)\])");
         std::smatch match;
         if (std::regex_search(raw, match, range_regex)) {
@@ -95,7 +87,6 @@ std::vector<std::string> VerilogParser::parse_signal_list(const std::string& lis
 void VerilogParser::process_statement(const std::string& stmt, Graph& graph) {
     std::regex ws(R"(\s+)");
     std::string s = std::regex_replace(stmt, ws, " ");
-    // Trim
     s.erase(0, s.find_first_not_of(" "));
     s.erase(s.find_last_not_of(" ") + 1);
     if (s.empty()) return;
@@ -105,76 +96,62 @@ void VerilogParser::process_statement(const std::string& stmt, Graph& graph) {
     ss >> first_word;
 
     if (first_word == "endmodule") return;
+    if (first_word == "module") {
+        std::regex mod_name_regex(R"(module\s+(\w+))");
+        std::smatch match;
+        if (std::regex_search(s, match, mod_name_regex)) {
+            graph.module_name = match[1];
+        }
+    }
 
     if (first_word == "module" || first_word == "input" || first_word == "output" || first_word == "wire") {
-        // Find all occurrences of input/output/wire declarations
-        // In ANSI Verilog, these can be inside the module statement.
         std::regex decl_regex(R"((input|output|wire)\s+(?:wire\s+)?(?:\[(\d+):(\d+)\]\s+)?([^,;\)]+))");
         auto decls_begin = std::sregex_iterator(s.begin(), s.end(), decl_regex);
         auto decls_end = std::sregex_iterator();
-
         for (std::sregex_iterator i = decls_begin; i != decls_end; ++i) {
             std::smatch match = *i;
             std::string kw = match[1];
             NodeType type = (kw == "input") ? NodeType::PRIMARY_INPUT :
                             (kw == "output") ? NodeType::PRIMARY_OUTPUT : NodeType::SIGNAL;
-            
             int msb = -1, lsb = -1;
             if (match[2].matched) {
                 msb = std::stoi(match[2]);
                 lsb = std::stoi(match[3]);
             }
-
             std::string names_str = match[4];
             std::regex name_regex(R"(\w+)");
             auto names_begin = std::sregex_iterator(names_str.begin(), names_str.end(), name_regex);
             auto names_end = std::sregex_iterator();
-
             for (std::sregex_iterator j = names_begin; j != names_end; ++j) {
                 std::string name = (*j).str();
                 if (msb != -1) {
                     auto expanded = expand_bus(name, msb, lsb);
-                    for (const auto& sig : expanded) {
-                        graph.get_or_create_node(sig, type);
-                    }
+                    for (const auto& sig : expanded) graph.get_or_create_node(sig, type);
                 } else {
                     graph.get_or_create_node(name, type);
                 }
             }
         }
     } else {
-        // Gate instantiation?
         GateType gt = string_to_gate_type(first_word);
         if (gt != GateType::UNKNOWN) {
             std::string inst_name;
             ss >> inst_name;
-            
             size_t open_paren = s.find('(');
             size_t close_paren = s.find(')');
             if (open_paren != std::string::npos && close_paren != std::string::npos) {
                 std::string ports_str = s.substr(open_paren + 1, close_paren - open_paren - 1);
                 auto ports = parse_signal_list(ports_str);
-                
                 Node* gate_node = graph.get_or_create_node(inst_name, NodeType::GATE);
                 gate_node->gate_type = gt;
-
                 if (gt == GateType::DFF) {
-                    // For ICCAD/ABC, treating DFF as pseudo-PI/PO.
-                    // d pin (usually 1st or 2nd) -> pseudo-output (end of combinational path)
-                    // q pin -> pseudo-input (start of combinational path)
-                    // Assuming simplified DFF (q, d, clk) or (q, d)
                     if (ports.size() >= 2) {
                         Node* q_node = graph.get_or_create_node(ports[0], NodeType::SIGNAL);
                         Node* d_node = graph.get_or_create_node(ports[1], NodeType::SIGNAL);
-                        
-                        // Combinational view:
-                        // DFF drives Q (so Q is a pseudo-input to the rest of the circuit)
-                        // DFF is driven by D (so D is a pseudo-output of the rest of the circuit)
-                        graph.add_edge(gate_node, q_node); // Q is output of DFF
-                        graph.add_edge(d_node, gate_node); // D is input to DFF
+                        graph.add_edge(gate_node, q_node);
+                        graph.add_edge(d_node, gate_node);
                     }
                 } else {
-                    // Primitive gates: first port is output, others are inputs
                     if (!ports.empty()) {
                         Node* out_node = graph.get_or_create_node(ports[0], NodeType::SIGNAL);
                         graph.add_edge(gate_node, out_node);
@@ -190,15 +167,48 @@ void VerilogParser::process_statement(const std::string& stmt, Graph& graph) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::cout << "Usage: " << argv[0] << " <verilog_file>" << std::endl;
+    std::unordered_map<std::string, std::string> args;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]).substr(0, 2) == "--") {
+            if (i + 1 < argc) args[argv[i]] = argv[i+1];
+        }
+    }
+    if (args.find("--in") == args.end()) {
+        std::cerr << "Usage: " << argv[0] << " --in <file.v> --action <action> [options]" << std::endl;
         return 1;
     }
-
     Graph g;
     VerilogParser parser;
-    parser.parse(argv[1], g);
-    g.print();
-
+    parser.parse(args["--in"], g);
+    std::string action = args["--action"];
+    if (action == "load") {
+        int pi = 0, po = 0, gates = 0;
+        for (auto n : g.all_nodes) {
+            if (n->type == NodeType::PRIMARY_INPUT) pi++;
+            else if (n->type == NodeType::PRIMARY_OUTPUT) po++;
+            else if (n->type == NodeType::GATE) gates++;
+        }
+        std::cout << "Success. PI: " << pi << ", PO: " << po << ", Gates: " << gates << std::endl;
+    } else if (action == "calc_depth") {
+        int d = g.calculate_depth(args["--start"], args["--end"]);
+        std::cout << "Depth: " << d << std::endl;
+    } else if (action == "count_paths") {
+        int c = g.count_paths(args["--start"], args["--end"], args["--avoid"]);
+        std::cout << "Paths: " << c << std::endl;
+    } else if (action == "get_info") {
+        std::cout << g.get_node_info(args["--node"]) << std::endl;
+    } else if (action == "list_nodes") {
+        for (auto n : g.all_nodes) std::cout << n->name << " (" << (n->type == NodeType::GATE ? "GATE" : "SIGNAL") << ")" << std::endl;
+    } else if (action == "replace_gate") {
+        if (g.replace_gate(args["--target"], args["--new_type"])) {
+            if (args.count("--out")) g.write_verilog(args["--out"]);
+            std::cout << "Success" << std::endl;
+        } else {
+            std::cout << "Failure" << std::endl;
+        }
+    } else {
+        std::cerr << "Unknown action: " << action << std::endl;
+        return 1;
+    }
     return 0;
 }
