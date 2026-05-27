@@ -19,7 +19,7 @@ import sys
 
 from config import Config
 from io_manager import IOManager, extract_testcase_name
-from eda_engine.mock_engine import MockEDAEngine
+from eda_engine.engine import EDAEngine
 from agent.planner import Planner
 
 # Warnings and errors go to stderr so they do not pollute stdout.
@@ -55,7 +55,7 @@ def main() -> None:
         sys.exit(f"Failed to load config '{args.config}': {exc}")
 
     io_mgr = IOManager()
-    engine = MockEDAEngine()
+    engine = EDAEngine()
     planner = Planner(config, engine)
 
     # ── main request loop ─────────────────────────────────────────────────────

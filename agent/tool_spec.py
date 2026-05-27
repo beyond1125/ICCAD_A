@@ -140,6 +140,34 @@ EDA_TOOLS: List[Dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "replace_gate",
+            "description": (
+                "Replace the type of a specific gate instance in the netlist. "
+                "Optionally save the modified design to a new file."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "The name of the gate instance to replace.",
+                    },
+                    "new_type": {
+                        "type": "string",
+                        "description": "The new gate type (e.g., 'nand', 'nor', 'and').",
+                    },
+                    "out_file": {
+                        "type": "string",
+                        "description": "Optional path to save the modified Verilog netlist.",
+                    },
+                },
+                "required": ["target", "new_type"],
+            },
+        },
+    },
 ]
 
 

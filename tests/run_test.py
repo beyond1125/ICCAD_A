@@ -48,10 +48,10 @@ def _extract_filepath_out(text: str) -> dict:
 
 
 def _extract_depth_args(text: str) -> dict:
-    m = re.search(r'from\s+(\w+)\s+to\s+(\w+)', text, re.I)
+    m = re.search(r'from\s+(?:input\s+)?(\w+)\s+to\s+(?:output\s+)?(\w+)', text, re.I)
     if m:
         return {"start_node": m.group(1), "end_node": m.group(2)}
-    return {"start_node": "in0", "end_node": "out0"}
+    return {"start_node": "in0", "end_node": "out3"}  # changed default to out3
 
 
 # ── deterministic LLM (no API key required) ───────────────────────────────────
@@ -131,12 +131,12 @@ def _run_main_loop(config_path: str, stdin_lines: list[str]) -> str:
     """Run the main request loop and return everything written to stdout."""
     from config import Config
     from io_manager import IOManager, extract_testcase_name
-    from eda_engine.mock_engine import MockEDAEngine
+    from eda_engine.engine import EDAEngine
     from agent.planner import Planner
 
     config = Config.from_yaml(config_path)
     io_mgr = IOManager()
-    engine = MockEDAEngine()
+    engine = EDAEngine()
     planner = Planner(config, engine)
 
     captured = io.StringIO()
@@ -179,7 +179,7 @@ def run():
 
     log_path.unlink(missing_ok=True)   # remove stale log
 
-    stdin_lines = test_input.read_text().splitlines(keepends=True)
+    stdin_lines = test_input.read_text(encoding="utf-8").splitlines(keepends=True)
 
     print(SEP)
     print("INPUT (simulated stdin)")

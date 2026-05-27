@@ -4,10 +4,10 @@ import os
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from eda_engine.mock_engine import MockEDAEngine
+from eda_engine.engine import EDAEngine
 
 def test_integration():
-    engine = MockEDAEngine()
+    engine = EDAEngine()
     
     print("--- Loading design ---")
     res = engine.load_design("design/netlist/test_complex.v")

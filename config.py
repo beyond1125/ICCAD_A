@@ -72,7 +72,7 @@ class Config:
         ${ENV_VAR} placeholders in string values are expanded from the
         environment (populated from .env if present).
         """
-        with open(path, "r") as fh:
+        with open(path, "r", encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
 
         provider = _expand(data.get("provider", "openai")).strip().lower()

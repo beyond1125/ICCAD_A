@@ -16,7 +16,7 @@ import logging
 from typing import Any, Callable, Dict, List
 
 from config import Config
-from eda_engine.mock_engine import MockEDAEngine
+from eda_engine.engine import EDAEngine
 from agent.llm_client import LLMClient, ToolCall
 from agent.tool_spec import EDA_TOOLS
 
@@ -36,7 +36,7 @@ _SYSTEM_PROMPT = (
 class Planner:
     """Drives the LLM tool-calling loop and executes tool calls on the EDA engine."""
 
-    def __init__(self, config: Config, engine: MockEDAEngine) -> None:
+    def __init__(self, config: Config, engine: EDAEngine) -> None:
         self._engine = engine
         self._llm = LLMClient(config, EDA_TOOLS)
 
@@ -49,6 +49,7 @@ class Planner:
             "find_paths":    engine.find_paths,
             "get_node_info": engine.get_node_info,
             "list_nodes":    engine.list_nodes,
+            "replace_gate":  engine.replace_gate,
         }
 
     # ------------------------------------------------------------------ public
