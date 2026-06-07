@@ -143,6 +143,20 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "count_gates",
+            "description": (
+                "Count the number of gates in the design, broken down by type."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "replace_gate",
             "description": (
                 "Replace the type of a specific gate instance in the netlist. "

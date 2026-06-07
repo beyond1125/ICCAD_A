@@ -3,6 +3,8 @@
 
 # runtime artefacts
 *.log
+*_out.v
+parser/parser_cpp.exe
 __pycache__/
 *.pyc
 *.pyo
@@ -12,3 +14,5 @@ __pycache__/
 # editor
 .vscode/
 .idea/
+
+venv

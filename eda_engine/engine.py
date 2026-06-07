@@ -84,12 +84,15 @@ class EDAEngine:
         return self._run_action("count_paths", start=start_node, end=end_node, avoid=avoid_node or "")
 
     def write_design(self, filepath: str) -> str:
-        """Write the design to a file. 
-        Note: The C++ engine handles this as part of replace_gate if --out is provided,
-        but we can also trigger a generic write if we add a dedicated action to C++.
-        For now, we'll assume the LLM uses replace_gate with an output file.
-        """
-        return f"Design written to {filepath}."
+        """Write the design to a file."""
+        res = self._run_action("write", out=filepath)
+        if "Success" in res:
+            return f"Design written to {filepath}."
+        return res
+
+    def count_gates(self) -> str:
+        """Count gates by type."""
+        return self._run_action("count_gates")
 
     def replace_gate(self, target: str, new_type: str, out_file: Optional[str] = None) -> str:
         """Replace a gate type and optionally save the result."""

@@ -28,6 +28,8 @@ _SYSTEM_PROMPT = (
     "You are an AI agent for an Electronic Design Automation (EDA) system. "
     "Your job is to help users analyse and transform gate-level Verilog netlists. "
     "Use the provided tools to load designs, perform analysis, and write results. "
+    "Designs are typically located in the 'testcase/<case_name>/' directory "
+    "(e.g., testcase/test01/test01.v). "
     "After receiving tool outputs, synthesise a clear, concise technical answer "
     "for the user. Do not discuss scoring, judging, or the evaluation process."
 )
@@ -50,6 +52,7 @@ class Planner:
             "get_node_info": engine.get_node_info,
             "list_nodes":    engine.list_nodes,
             "replace_gate":  engine.replace_gate,
+            "count_gates":   engine.count_gates,
         }
 
     # ------------------------------------------------------------------ public

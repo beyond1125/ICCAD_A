@@ -1,10 +1,22 @@
 #include "parser.hpp"
 #include <algorithm>
+#include <ctime>
+
+void log_error(const std::string& msg) {
+    std::cerr << msg << std::endl;
+    std::ofstream log_file("parser_error.log", std::ios::app);
+    if (log_file.is_open()) {
+        std::time_t now = std::time(nullptr);
+        char timestamp[20];
+        std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+        log_file << "[" << timestamp << "] " << msg << std::endl;
+    }
+}
 
 void VerilogParser::parse(const std::string& filename, Graph& graph) {
     std::ifstream ifs(filename);
     if (!ifs.is_open()) {
-        std::cerr << "Failed to open file: " << filename << std::endl;
+        log_error("Failed to open file: " + filename);
         return;
     }
 
@@ -50,6 +62,7 @@ GateType VerilogParser::string_to_gate_type(const std::string& type_str) {
     if (type_str == "xor") return GateType::XOR;
     if (type_str == "nor") return GateType::NOR;
     if (type_str == "nand") return GateType::NAND;
+    if (type_str == "xnor") return GateType::XNOR;
     if (type_str == "buf") return GateType::BUF;
     if (type_str == "dff" || type_str == "DFF") return GateType::DFF;
     return GateType::UNKNOWN;
@@ -91,12 +104,13 @@ void VerilogParser::process_statement(const std::string& stmt, Graph& graph) {
     s.erase(s.find_last_not_of(" ") + 1);
     if (s.empty()) return;
 
-    std::stringstream ss(s);
-    std::string first_word;
-    ss >> first_word;
+    if (s.find("endmodule") != std::string::npos) return;
 
-    if (first_word == "endmodule") return;
-    if (first_word == "module") {
+    std::stringstream ss_fw(s);
+    std::string first_word;
+    ss_fw >> first_word;
+
+    if (s.substr(0, 6) == "module") {
         std::regex mod_name_regex(R"(module\s+(\w+))");
         std::smatch match;
         if (std::regex_search(s, match, mod_name_regex)) {
@@ -104,46 +118,83 @@ void VerilogParser::process_statement(const std::string& stmt, Graph& graph) {
         }
     }
 
-    if (first_word == "module" || first_word == "input" || first_word == "output" || first_word == "wire") {
-        std::regex decl_regex(R"((input|output|wire)\s+(?:wire\s+)?(?:\[(\d+):(\d+)\]\s+)?([^,;\)]+))");
-        auto decls_begin = std::sregex_iterator(s.begin(), s.end(), decl_regex);
-        auto decls_end = std::sregex_iterator();
-        for (std::sregex_iterator i = decls_begin; i != decls_end; ++i) {
-            std::smatch match = *i;
-            std::string kw = match[1];
-            NodeType type = (kw == "input") ? NodeType::PRIMARY_INPUT :
-                            (kw == "output") ? NodeType::PRIMARY_OUTPUT : NodeType::SIGNAL;
-            int msb = -1, lsb = -1;
-            if (match[2].matched) {
-                msb = std::stoi(match[2]);
-                lsb = std::stoi(match[3]);
-            }
-            std::string names_str = match[4];
-            std::regex name_regex(R"(\w+)");
-            auto names_begin = std::sregex_iterator(names_str.begin(), names_str.end(), name_regex);
-            auto names_end = std::sregex_iterator();
-            for (std::sregex_iterator j = names_begin; j != names_end; ++j) {
-                std::string name = (*j).str();
+    // Process input, output, wire
+    std::regex kw_regex(R"(\b(input|output|wire)\b)");
+    auto kw_begin = std::sregex_iterator(s.begin(), s.end(), kw_regex);
+    auto kw_end = std::sregex_iterator();
+
+    for (std::sregex_iterator i = kw_begin; i != kw_end; ++i) {
+        std::string kw = (*i)[1];
+        NodeType type = (kw == "input") ? NodeType::PRIMARY_INPUT :
+                        (kw == "output") ? NodeType::PRIMARY_OUTPUT : NodeType::SIGNAL;
+        
+        std::string remaining = i->suffix().str();
+        // We only want to process until the next keyword or end of statement
+        size_t next_kw = std::string::npos;
+        std::smatch next_match;
+        if (std::regex_search(remaining, next_match, kw_regex)) {
+            next_kw = next_match.position();
+        }
+        std::string current_decl = remaining.substr(0, next_kw);
+
+        // Check for range [msb:lsb]
+        int msb = -1, lsb = -1;
+        std::regex range_regex(R"(^\s*\[(\d+):(\d+)\])");
+        std::smatch range_match;
+        if (std::regex_search(current_decl, range_match, range_regex)) {
+            msb = std::stoi(range_match[1]);
+            lsb = std::stoi(range_match[2]);
+            current_decl = range_match.suffix();
+        }
+
+        // Parse comma-separated names
+        std::regex name_regex(R"(\w+(?:\s*\[\d+\])?)");
+        auto names_begin = std::sregex_iterator(current_decl.begin(), current_decl.end(), name_regex);
+        auto names_end = std::sregex_iterator();
+        for (std::sregex_iterator j = names_begin; j != names_end; ++j) {
+            std::string raw_name = (*j).str();
+            std::regex unpacked_regex(R"((\w+)\s*\[(\d+)\])");
+            std::smatch unpacked_match;
+            if (std::regex_search(raw_name, unpacked_match, unpacked_regex)) {
+                std::string base = unpacked_match[1];
+                int count = std::stoi(unpacked_match[2]);
+                for (int k = 0; k < count; ++k) {
+                    graph.get_or_create_node(base + "[" + std::to_string(k) + "]", type);
+                }
+            } else {
                 if (msb != -1) {
-                    auto expanded = expand_bus(name, msb, lsb);
+                    auto expanded = expand_bus(raw_name, msb, lsb);
                     for (const auto& sig : expanded) graph.get_or_create_node(sig, type);
                 } else {
-                    graph.get_or_create_node(name, type);
+                    graph.get_or_create_node(raw_name, type);
                 }
             }
         }
-    } else {
+    }
+
+    // Process gates
+    if (first_word != "module" && first_word != "input" && first_word != "output" && first_word != "wire" && first_word != "assign" && first_word != "endmodule") {
         GateType gt = string_to_gate_type(first_word);
         if (gt != GateType::UNKNOWN) {
-            std::string inst_name;
-            ss >> inst_name;
             size_t open_paren = s.find('(');
-            size_t close_paren = s.find(')');
-            if (open_paren != std::string::npos && close_paren != std::string::npos) {
+            size_t close_paren = s.find_last_of(')');
+            if (open_paren != std::string::npos && close_paren != std::string::npos && close_paren > open_paren) {
+                // Instance name is between gate type and '('
+                std::string inst_name = s.substr(first_word.length(), open_paren - first_word.length());
+                inst_name.erase(0, inst_name.find_first_not_of(" "));
+                inst_name.erase(inst_name.find_last_not_of(" ") + 1);
+                
                 std::string ports_str = s.substr(open_paren + 1, close_paren - open_paren - 1);
                 auto ports = parse_signal_list(ports_str);
+                
+                if (inst_name.empty()) {
+                    static int anon_count = 0;
+                    inst_name = "anon_" + std::to_string(anon_count++);
+                }
+
                 Node* gate_node = graph.get_or_create_node(inst_name, NodeType::GATE);
                 gate_node->gate_type = gt;
+                
                 if (gt == GateType::DFF) {
                     if (ports.size() >= 2) {
                         Node* q_node = graph.get_or_create_node(ports[0], NodeType::SIGNAL);
@@ -174,7 +225,7 @@ int main(int argc, char** argv) {
         }
     }
     if (args.find("--in") == args.end()) {
-        std::cerr << "Usage: " << argv[0] << " --in <file.v> --action <action> [options]" << std::endl;
+        log_error("Usage: " + std::string(argv[0]) + " --in <file.v> --action <action> [options]");
         return 1;
     }
     Graph g;
@@ -204,10 +255,28 @@ int main(int argc, char** argv) {
             if (args.count("--out")) g.write_verilog(args["--out"]);
             std::cout << "Success" << std::endl;
         } else {
+            log_error("Failure: Could not replace gate " + (args.count("--target") ? args["--target"] : "unknown"));
             std::cout << "Failure" << std::endl;
         }
+    } else if (action == "write") {
+        if (args.count("--out")) {
+            g.write_verilog(args["--out"]);
+            std::cout << "Success" << std::endl;
+        } else {
+            log_error("Error: --out required for write action");
+        }
+    } else if (action == "count_gates") {
+        std::unordered_map<GateType, int> counts;
+        for (auto n : g.all_nodes) {
+            if (n->type == NodeType::GATE) counts[n->gate_type]++;
+        }
+        std::cout << "Gate counts:\n";
+        std::vector<GateType> types = {GateType::NOT, GateType::AND, GateType::OR, GateType::XOR, GateType::NOR, GateType::NAND, GateType::BUF, GateType::DFF};
+        for (auto t : types) {
+            std::cout << g.gate_type_to_string_public(t) << ": " << counts[t] << "\n";
+        }
     } else {
-        std::cerr << "Unknown action: " << action << std::endl;
+        log_error("Unknown action: " + action);
         return 1;
     }
     return 0;
