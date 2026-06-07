@@ -1,113 +1,79 @@
-# CADA EDA Agent
+# ICCAD 2026 Problem A: LLM-Assisted Netlist Transformation
 
-The CADA EDA agent is an LLM-assisted tool designed for exploring and transforming gate-level Verilog netlists. It provides a natural-language interface for users to perform complex Electronic Design Automation (EDA) tasks such as path analysis, design depth calculation, and netlist modifications.
+這是一個結合大型語言模型 (LLM) 與 C++ 後端引擎的電路網表 (Netlist) 處理系統。系統能夠解析 Verilog 網表、分析電路結構（如路徑計數、深度計算）並進行閘級轉換（如更換閘類型）。
 
-## Project Overview
+## 專案架構
 
-The system leverages Large Language Models (LLMs) to interpret natural-language requests and translate them into specific EDA tool calls. These tools are executed against a custom C++ backend that performs efficient graph-based analysis on Verilog netlists.
-
-Key features include:
-- **Natural Language Interface**: Ask questions like "What is the max depth between in0 and out0?" or "How many paths exist between A and B avoiding C?"
-- **Path Analysis**: Count paths and calculate combinational depths between nodes.
-- **Netlist Exploration**: List nodes, get signal/gate info, and explore design structure.
-- **Modifications**: Support for gate type replacement and Verilog design emission.
-
-## Environment Requirements
-
-- **Python**: 3.8 or higher.
-- **C++ Compiler**: g++ supporting C++17 or later (required for regex and modern STL).
-- **API Keys**: Access to OpenAI or Anthropic LLM services.
-
-### Python Dependencies
-Install the required packages using pip:
-```bash
-pip install -r requirements.txt
+```text
+ICCAD_A/
+├── main.py              # 系統入口點，負責與使用者/測試環境互動的 Loop
+├── io_manager.py        # 處理輸出格式規範 (#RESPONSE) 與 Log 記錄
+├── config.py            # 設定檔解析 (YAML & .env)
+├── config.yaml          # 系統執行設定 (LLM 模型選擇等)
+├── .env                 # API 金鑰存放 (需手動建立，已被 gitignore)
+├── requirements.txt     # Python 套件依賴清單
+│
+├── agent/               # AI 代理人核心
+│   ├── planner.py       # 任務規劃器，協調 LLM 與 Tool 呼叫
+│   ├── llm_client.py    # LLM API 封裝 (支援 OpenAI/Anthropic)
+│   └── tool_spec.py     # 定義暴露給 AI 的工具介面
+│
+├── eda_engine/          # EDA 引擎封裝
+│   └── engine.py        # Python 介面，透過子程序呼叫 C++ Parser
+│
+├── parser/              # C++ 核心解析器
+│   ├── parser.cpp       # Verilog 解析與圖形結構邏輯實作
+│   ├── parser.hpp       # 資料結構 (Graph, Node) 定義
+│   └── parser_cpp.exe   # 編譯後的執行檔
+│
+├── testcase/            # 官方測試案例目錄
+├── tests/               # 開發驗證用的測試腳本
+├── venv/                # Python 虛擬環境 (建議使用)
+└── tools/abc            # 自己clone abc到這個資料夾備用
 ```
-Primary packages include: `openai`, `anthropic`, `pyyaml`, and `python-dotenv`.
 
-## Installation and Build Instructions
+## 檔案說明
 
-1. **Clone the Repository**
+- **`main.py`**: 核心啟動檔。它會讀取標準輸入，辨識測試案例初始化訊息，並將使用者的自然語言指令交給 AI Planner 處理。
+- **`parser/`**: 系統的運算核心。使用 C++ 撰寫以確保解析大型網表（數千個閘）時的效能。支援 Verilog-1995 格式輸出。
+- **`eda_engine/engine.py`**: 橋樑模組。它負責將 Python 的指令轉換為 C++ 解析器能理解的參數，並讀取解析後的結果。
+- **`agent/planner.py`**: 決策大腦。它將使用者的意圖轉化為一系列的工具呼叫（如：先 load\_design 再 analyze\_depth）。
+- **`io_manager.py`**: 嚴格遵循競賽規範的輸出管理器，自動處理 `#RESPONSE` 標籤與時間戳記 Log。
+
+## 環境建置
+
+1. **建立虛擬環境並安裝套件**:
    ```bash
-   git clone <repository_url>
-   cd ICCAD_A
+   python -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
    ```
 
-2. **Compile the C++ Parser**
-   The EDA engine relies on a compiled C++ binary for netlist operations.
+2. **編譯 C++ Parser**:
    ```bash
    g++ -std=c++17 parser/parser.cpp -o parser/parser_cpp.exe
    ```
-   *Note: The Python engine expects the binary at `parser/parser_cpp.exe`.*
 
-3. **Set Up Environment Variables**
-   Copy the example environment file and add your API keys:
-   ```bash
-   cp .env.example .env
+3. **設定 API 金鑰**:
+   建立 `.env` 檔案並填入您的金鑰：
+   ```text
+   ANTHROPIC_API_KEY=your_key_here
+   OPENAI_API_KEY=your_key_here
    ```
-   Edit `.env` to include your `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
 
-4. **Configuration**
-   Create or edit `config.yaml` (based on `config_example.yaml`) to set your preferred LLM provider and model.
+4. **clone abc到tools資料夾備用**
 
-## How to Run
+## 執行方式
 
-There are two primary ways to run and test the system:
-
-### 1. Live Mode (Real LLM API)
-This mode connects to real LLM services (OpenAI or Anthropic) and uses the full power of the agent to handle arbitrary natural language requests.
-
-**Prerequisites**: Valid API keys in `.env` or `config.yaml`.
-
-**Execution**:
+啟動主程式：
 ```bash
 python main.py -config config.yaml
 ```
-Once started, the agent will wait for input on `stdin`. You can initialize a testcase and then issue commands:
-```text
-This is the beginning of testcase my_test.
-Load design design/netlist/test8.v
-What is the logic depth from in0 to out3?
-```
+啟動後，您可以直接在終端機輸入自然語言指令，例如：
+*   `Initialize testcase "test01"`
+*   `Load design from testcase/test01/test01.v`
+*   `Calculate the maximum depth from n0[0] to n3[3]`
 
-### 2. Dry-run Mode (Deterministic Stub)
-This mode uses a rule-based `DeterministicLLMClient` to simulate LLM responses without making any real API calls. It is ideal for verifying the connectivity between the Python logic and the C++ parser.
+## 錯誤排查
 
-**Execution**:
-```bash
-python tests/run_test.py
-```
-This script:
-- Uses `tests/test_input.txt` as a simulated input stream.
-- Patches the LLM client with a deterministic stub that recognizes keywords (load, depth, write).
-- Verifies that the outputs (stdout and log files) match the expected format and values from the C++ parser.
-
-## Directory Structure
-
-- **`agent/`**: Contains the agentic logic, including the `Planner` which orchestrates the LLM loop and `tool_spec.py` which defines the available EDA tools.
-- **`eda_engine/`**: The bridge between the Python agent and the C++ parser. `engine.py` handles process invocation and data marshaling.
-- **`parser/`**: The C++ source code for the Verilog parser and graph-based netlist algorithms.
-- **`design/netlist/`**: A directory for storing sample and target Verilog designs.
-- **`tests/`**: Integration and regression tests, including the dry-run test environment.
-- **`main.py`**: The main entry point for the application, handling CLI arguments and the top-level loop.
-- **`io_manager.py`**: Manages the specific input/output formatting (#RESPONSE / #END tags) required for competition grading.
-
-## Module Responsibilities and Interfaces
-
-### Agent
-The **Planner** drives the `LLM -> Tool-Call -> Result` loop. It maintains the conversation history and dispatches tool requests to the EDA Engine. It uses a **Tool Specification** to inform the LLM of the available operations.
-
-### EDA Engine
-The **EDAEngine** (located in `eda_engine/engine.py`) serves as a Python wrapper around the C++ CLI. It converts Python tool calls into shell commands executed against the compiled parser.
-
-### Parser
-The **C++ Parser** is the performance-critical component. It:
-1. Parses gate-level Verilog into a directed graph representation.
-2. Implements algorithms for `calculate_depth` and `count_paths`.
-3. Handles structural modifications like `replace_gate`.
-4. Emits updated designs back to Verilog format.
-
-## Known Issues / TODO
-
-- **Parser Scope**: The current C++ parser uses regex-based parsing optimized for flat, gate-level netlists. Complex behavioral Verilog or deeply nested hierarchies may not be fully supported.
-- **Concurrency**: The current implementation processes one request at a time.
+若系統執行異常，請檢查專案根目錄下的 **`parser_error.log`**，該檔案詳細記錄了 C++ 解析器的執行錯誤與時間戳記。
