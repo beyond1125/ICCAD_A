@@ -103,6 +103,10 @@ class EDAEngine:
         """Return path count between two nodes."""
         return self._run_action("count_paths", start=start_node, end=end_node, avoid=avoid_node or "")
 
+    def count_fanin_gates(self, node_name: str) -> str:
+        """Count gates in the fanin cone of a specific node."""
+        return self._run_action("count_fanin", node=node_name)
+
     def write_design(self, filepath: str) -> str:
         """Write the design to a file."""
         res = self._run_action("write", out=filepath)

@@ -55,6 +55,7 @@ class Planner:
             "list_nodes":    engine.list_nodes,
             "replace_gate":  engine.replace_gate,
             "count_gates":   engine.count_gates,
+            "count_fanin_gates": engine.count_fanin_gates,
         }
 
     # ------------------------------------------------------------------ public

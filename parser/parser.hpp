@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -77,6 +78,12 @@ public:
         
         std::unordered_map<Node*, int> memo;
         return count_paths_recursive(nodes[start], nodes[end], avoid_node, memo);
+    }
+
+    int count_fanin_gates(const std::string& name) {
+        if (nodes.find(name) == nodes.end()) return 0;
+        std::unordered_set<Node*> visited;
+        return count_fanin_gates_recursive(nodes[name], visited);
     }
 
     std::string get_node_info(const std::string& name) {
@@ -212,6 +219,17 @@ private:
             count += count_paths_recursive(next, target, avoid, memo);
         }
         return memo[curr] = count;
+    }
+
+    int count_fanin_gates_recursive(Node* curr, std::unordered_set<Node*>& visited) {
+        if (!curr || visited.count(curr)) return 0;
+        visited.insert(curr);
+
+        int count = (curr->type == NodeType::GATE) ? 1 : 0;
+        for (auto in : curr->inputs) {
+            count += count_fanin_gates_recursive(in, visited);
+        }
+        return count;
     }
 
     std::string gate_type_to_string(GateType gt) {

@@ -109,6 +109,26 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "count_fanin_gates",
+            "description": (
+                "Count the number of gate instances in the transitive fanin cone "
+                "of a specific node (signal or gate)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The target signal or gate name.",
+                    }
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_node_info",
             "description": (
                 "Retrieve structural information (type, fanin, fanout, driver) "
