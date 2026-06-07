@@ -11,6 +11,7 @@ Output contract (Section 3.3 of the spec):
 
 import sys
 import re
+import os
 from typing import Optional
 
 
@@ -53,13 +54,19 @@ class IOManager:
     # ------------------------------------------------------------------ public
 
     def init_testcase(self, case_name: str) -> None:
-        """Open a new log file and reset the response counter to 0 (next write → 1)."""
+        """Open a new log file in the testcase directory and reset the response counter."""
         if self._log_file:
             self._log_file.close()
         self._case_name = case_name
         self._response_id = 0
-        # line-buffered so every write reaches disk immediately
-        self._log_file = open(f"{case_name}.log", "w", buffering=1)
+        
+        # Ensure the directory exists
+        case_dir = f"testcase/{case_name}"
+        if not os.path.exists(case_dir):
+            os.makedirs(case_dir, exist_ok=True)
+            
+        log_path = os.path.join(case_dir, f"{case_name}.log")
+        self._log_file = open(log_path, "w", buffering=1)
 
     def write_response(self, text: str) -> None:
         """Increment the ID, wrap *text* in tags, write to stdout and the log.

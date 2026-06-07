@@ -62,6 +62,16 @@ ICCAD_A/
    ```
 
 4. **clone abc到tools資料夾備用**
+   ```bash
+   cd tools
+   git clone https://github.com/berkeley-abc/abc.git
+   cd abc
+   make
+   ```
+   **使用方式**
+   ```bash
+   ./abc
+   ```
 
 ## 執行方式
 
