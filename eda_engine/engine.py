@@ -1,6 +1,6 @@
 """Real EDA engine — Python wrapper for the C++ netlist parser and analyzer.
 
-Each method delegates to the 'parser_cpp.exe' binary via subprocess calls.
+Each method delegates to the C++ parser binary via subprocess calls.
 The engine maintains the path to the currently loaded Verilog file.
 
 Supported operations (mirrors tool_spec.py):
@@ -18,15 +18,35 @@ import os
 import sys
 from typing import Any, Dict, Optional, List
 
+
+def _find_parser_binary() -> str:
+    """Resolve the C++ parser executable across Linux, macOS, and Windows."""
+    env_path = os.environ.get("PARSER_BIN")
+    if env_path and os.path.isfile(env_path):
+        return os.path.abspath(env_path)
+
+    parser_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "parser")
+    )
+    if sys.platform == "win32":
+        candidates = ("parser_cpp.exe", "parser_cpp")
+    else:
+        candidates = ("parser_cpp", "parser_cpp.exe")
+
+    for name in candidates:
+        path = os.path.join(parser_dir, name)
+        if os.path.isfile(path):
+            return path
+
+    return os.path.join(parser_dir, candidates[0])
+
+
 class EDAEngine:
     """Thin Python wrapper for the C++ EDA engine CLI."""
 
     def __init__(self) -> None:
         self._loaded_filepath: Optional[str] = None
-        # Look for the binary in the ../parser/ directory relative to this file
-        self._parser_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "parser", "parser_cpp.exe")
-        )
+        self._parser_path = _find_parser_binary()
 
     def _run_action(self, action: str, **kwargs) -> str:
         """Helper to run a command on the C++ parser."""

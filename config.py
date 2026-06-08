@@ -26,7 +26,7 @@ from pathlib import Path
 # Load .env from the project root (silently ignored if absent or dotenv missing)
 try:
     from dotenv import load_dotenv
-    load_dotenv(Path(__file__).resolve().parent / ".env")
+    load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 except ImportError:
     pass  # python-dotenv not installed — fall back to real env vars only
 

@@ -21,10 +21,13 @@ ICCAD_A/
 ├── eda_engine/          # EDA 引擎封裝
 │   └── engine.py        # Python 介面，透過子程序呼叫 C++ Parser
 │
+├── scripts/             # 開發輔助腳本
+│   └── build_parser.py  # 跨平台編譯 C++ parser
+│
 ├── parser/              # C++ 核心解析器
 │   ├── parser.cpp       # Verilog 解析與圖形結構邏輯實作
 │   ├── parser.hpp       # 資料結構 (Graph, Node) 定義
-│   └── parser_cpp.exe   # 編譯後的執行檔
+│   └── parser_cpp       # Linux/macOS 編譯產物（Windows 為 parser_cpp.exe）
 │
 ├── testcase/            # 官方測試案例目錄
 ├── tests/               # 開發驗證用的測試腳本
@@ -37,7 +40,7 @@ ICCAD_A/
 - **`main.py`**: 核心啟動檔。它會讀取標準輸入，辨識測試案例初始化訊息，並將使用者的自然語言指令交給 AI Planner 處理。
 - **`parser/`**: 系統的運算核心。使用 C++ 撰寫以確保解析大型網表（數千個閘）時的效能。支援 Verilog-1995 格式輸出。
 - **`eda_engine/engine.py`**: 橋樑模組。它負責將 Python 的指令轉換為 C++ 解析器能理解的參數，並讀取解析後的結果。
-- **`agent/planner.py`**: 決策大腦。它將使用者的意圖轉化為一系列的工具呼叫（如：先 load\_design 再 analyze\_depth）。
+- **`agent/planner.py`**: 決策大腦。它將使用者的意圖轉化為一系列的工具呼叫（如：先 load\_design 再 analyze\_depth）。每次請求會帶入 EDA engine 的 session 狀態（例如已載入的 design 路徑），讓後續 write/analyze 指令能接續前一步。
 - **`io_manager.py`**: 嚴格遵循競賽規範的輸出管理器，自動處理 `#RESPONSE` 標籤與時間戳記 Log。
 
 ## 環境建置
@@ -49,10 +52,14 @@ ICCAD_A/
    pip install -r requirements.txt
    ```
 
-2. **編譯 C++ Parser**:
+2. **編譯 C++ Parser**（Linux / macOS / Windows 通用）:
    ```bash
-   g++ -std=c++17 parser/parser.cpp -o parser/parser_cpp.exe
+   python scripts/build_parser.py
    ```
+   - Linux / macOS 會產生 `parser/parser_cpp`
+   - Windows 會產生 `parser/parser_cpp.exe`
+   - 執行時會自動偵測上述任一檔名；也可用環境變數覆寫：
+     `PARSER_BIN=/path/to/parser ./venv/bin/python main.py -config config.yaml`
 
 3. **設定 API 金鑰**:
    建立 `.env` 檔案並填入您的金鑰：
@@ -83,6 +90,43 @@ python main.py -config config.yaml
 *   `Initialize testcase "test01"`
 *   `Load design from testcase/test01/test01.v`
 *   `Calculate the maximum depth from n0[0] to n3[3]`
+
+## Log 檔案位置
+
+| 類型 | 路徑 | 說明 |
+|------|------|------|
+| 對話 / 回應 log | `testcase/<case_name>/<case_name>.log` | 與 stdout 相同，含 `#RESPONSE` / `#END` |
+| Parser 錯誤 log | `parser_error.log`（專案根目錄） | C++ parser 執行錯誤時寫入 |
+| 輸出 netlist | `testcase/<case_name>/<case_name>_out.v` | `write_design` 產物 |
+
+## 跨平台協作建議
+
+此專案支援 **Linux / macOS / Windows** 共同開發，重點如下：
+
+| 項目 | 做法 |
+|------|------|
+| **Parser 二進位** | 不要 commit；各自在本機執行 `python scripts/build_parser.py` |
+| **Python 依賴** | 各自建立 `venv` 並 `pip install -r requirements.txt` |
+| **API 金鑰** | 放在 `.env`（已在 gitignore），不要寫進程式碼 |
+| **LLM 設定** | `config.yaml` 可各自改 provider/model；若常衝突可改為 commit `config.yaml.example`，本地複製成 `config.yaml` |
+
+**Windows 協作者建置流程：**
+```powershell
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+python scripts\build_parser.py
+python main.py -config config.yaml
+```
+
+**Linux 協作者建置流程：**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python scripts/build_parser.py
+python main.py -config config.yaml
+```
 
 ## 錯誤排查
 
