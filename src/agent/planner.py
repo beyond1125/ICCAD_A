@@ -15,7 +15,7 @@ as the tool result so the LLM can recover without crashing the process.
 import logging
 from typing import Any, Callable, Dict, List
 
-from config import Config
+from utils.config import Config
 from eda_engine.engine import EDAEngine
 from agent.llm_client import LLMClient, ToolCall
 from agent.tool_spec import EDA_TOOLS

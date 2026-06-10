@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from config import Config
+from utils.config import Config
 from agent.tool_spec import to_anthropic_tools
 
 logger = logging.getLogger(__name__)

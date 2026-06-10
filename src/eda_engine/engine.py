@@ -26,7 +26,7 @@ def _find_parser_binary() -> str:
         return os.path.abspath(env_path)
 
     parser_dir = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "parser")
+        os.path.join(os.path.dirname(__file__), "parser")
     )
     if sys.platform == "win32":
         candidates = ("parser_cpp.exe", "parser_cpp")

@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PARSER_DIR = os.path.join(ROOT, "parser")
+PARSER_DIR = os.path.join(ROOT, "src", "eda_engine", "parser")
 SRC = os.path.join(PARSER_DIR, "parser.cpp")
 
 

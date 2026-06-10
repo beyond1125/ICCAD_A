@@ -6,6 +6,8 @@
 *_out.v
 parser/parser_cpp
 parser/parser_cpp.exe
+src/eda_engine/parser/parser_cpp
+src/eda_engine/parser/parser_cpp.exe
 __pycache__/
 *.pyc
 *.pyo
@@ -18,6 +20,10 @@ __pycache__/
 
 # deprecated local notes (do not commit)
 agent_handoff_v3.md
+
+abc.history
+config.yaml.local.bak
+.cursorignore
 
 tools/abc
 venv

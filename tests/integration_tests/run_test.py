@@ -5,7 +5,7 @@ Runs the full main loop against tests/test_input.txt using a
 DeterministicLLMClient that simulates tool-calling without any real API key.
 
 Usage (from the project root):
-    python3 tests/run_test.py
+    python3 tests/integration_tests/run_test.py
 
 What it exercises:
     1. Testcase init   → #RESPONSE 1  (no LLM involved)
@@ -22,9 +22,9 @@ import io
 import unittest.mock as mock
 from pathlib import Path
 
-# Ensure the project root is importable
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
+# Ensure the project root and src/ are importable
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from agent.llm_client import LLMResponse, ToolCall  # noqa: E402
 
@@ -129,8 +129,8 @@ SEP = "─" * 60
 
 def _run_main_loop(config_path: str, stdin_lines: list[str]) -> str:
     """Run the main request loop and return everything written to stdout."""
-    from config import Config
-    from io_manager import IOManager, extract_testcase_name
+    from utils.config import Config
+    from utils.io_manager import IOManager, extract_testcase_name
     from eda_engine.engine import EDAEngine
     from agent.planner import Planner
 
@@ -155,7 +155,8 @@ def _run_main_loop(config_path: str, stdin_lines: list[str]) -> str:
                     planner.reset()
                     response = (
                         f'Acknowledged. Initialized testcase "{case_name}". '
-                        f'All subsequent responses will be recorded to {case_name}.log.\n'
+                        f'All subsequent responses will be recorded to '
+                        f'testcase/{case_name}/{case_name}.log.\n'
                         f'Design state is empty and ready for commands.'
                     )
                 else:
@@ -173,11 +174,12 @@ def _run_main_loop(config_path: str, stdin_lines: list[str]) -> str:
 def run():
     os.chdir(PROJECT_ROOT)  # log file is written relative to cwd
 
-    test_input = PROJECT_ROOT / "tests" / "test_input.txt"
-    config_path = str(PROJECT_ROOT / "tests" / "config_test.yaml")
-    log_path = Path("test8.log")
+    test_input = PROJECT_ROOT / "tests" / "integration_tests" / "test_input.txt"
+    config_path = str(PROJECT_ROOT / "config.yaml")
+    log_path = PROJECT_ROOT / "testcase" / "test8" / "test8.log"
 
-    log_path.unlink(missing_ok=True)   # remove stale log
+    log_path.unlink(missing_ok=True)
+    (PROJECT_ROOT / "testcase" / "test8").mkdir(parents=True, exist_ok=True)
 
     stdin_lines = test_input.read_text(encoding="utf-8").splitlines(keepends=True)
 
@@ -198,7 +200,7 @@ def run():
     print(stdout_text)
 
     print(SEP)
-    print("LOG FILE  test8.log")
+    print("LOG FILE  testcase/test8/test8.log")
     print(SEP)
     log_text = log_path.read_text() if log_path.exists() else "(missing!)"
     print(log_text)
@@ -216,9 +218,9 @@ def run():
     if 'Initialized testcase "test8"' not in stdout_text:
         errors.append("Missing testcase acknowledgment in response 1")
     if not log_path.exists():
-        errors.append("test8.log was not created")
+        errors.append("testcase/test8/test8.log was not created")
     elif log_path.read_text() != stdout_text:
-        errors.append("test8.log content does not match stdout")
+        errors.append("testcase/test8/test8.log content does not match stdout")
 
     print(SEP)
     if errors:
@@ -229,7 +231,7 @@ def run():
     else:
         print("RESULT: PASS")
         print(f"  ✓  {len(responses)} responses with matching #RESPONSE / #END tags")
-        print(f"  ✓  test8.log == stdout")
+        print(f"  ✓  testcase/test8/test8.log == stdout")
         print(f"  ✓  testcase acknowledgment in response 1")
 
 

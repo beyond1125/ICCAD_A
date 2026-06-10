@@ -2,7 +2,8 @@
 """Entry point for the CADA EDA agent.
 
 Invocation (Section 3.1):
-    ./cada0001_alpha -config <config_file_path>
+    python main.py -config <config_file_path>
+    (program name: cada1066)
 
 Reads natural-language requests from stdin one line at a time.
 Detects testcase-initialisation messages, resets state, and opens the log.
@@ -16,9 +17,13 @@ so IOManager flushes stdout immediately after writing each #END tag.
 import argparse
 import logging
 import sys
+from pathlib import Path
 
-from config import Config
-from io_manager import IOManager, extract_testcase_name
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT / "src"))
+
+from utils.config import Config
+from utils.io_manager import IOManager, extract_testcase_name
 from eda_engine.engine import EDAEngine
 from agent.planner import Planner
 
@@ -33,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="cada0001_alpha",
+        prog="cada1066",
         description="LLM-Assisted Netlist Exploration and Transformation Agent",
     )
     parser.add_argument(
@@ -79,7 +84,8 @@ def main() -> None:
                 planner.reset()
                 response = (
                     f'Acknowledged. Initialized testcase "{case_name}". '
-                    f'All subsequent responses will be recorded to {case_name}.log.\n'
+                    f'All subsequent responses will be recorded to '
+                    f'testcase/{case_name}/{case_name}.log.\n'
                     f'Design state is empty and ready for commands.'
                 )
             else:
