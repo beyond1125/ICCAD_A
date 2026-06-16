@@ -78,6 +78,10 @@ class EDAEngine:
         # to it so later actions (and write_design) see the transformed netlist.
         self._session_dir = tempfile.mkdtemp(prefix="eda_sess_")
         self._xform_seq = 0
+        # A fanout limit, once requested, must hold on the final netlist. Logic
+        # restructuring (reduce_depth) dissolves buffers, so we remember the limit
+        # and re-enforce it automatically after such transforms.
+        self._max_fanout_constraint: Optional[int] = None
 
     def _session_path(self, tag: str, ext: str = "v") -> str:
         self._xform_seq += 1
@@ -209,6 +213,7 @@ class EDAEngine:
         res = self._run_action("insert_buffers", max_fanout=max_fanout, out=work)
         if "Inserted" in res and os.path.isfile(work):
             self._loaded_filepath = work
+            self._max_fanout_constraint = max_fanout
         return res
 
     def reduce_depth(self) -> str:
@@ -265,9 +270,18 @@ class EDAEngine:
             )
         else:
             change = "Logic restructured for depth."
+
+        # Restructuring dissolves buffers, so re-enforce any fanout limit that was
+        # previously requested — it must still hold on the final netlist.
+        rebuf = ""
+        if self._max_fanout_constraint is not None:
+            br = self.insert_buffers(self._max_fanout_constraint)
+            if "Inserted" in br:
+                rebuf = f" Re-applied max-fanout {self._max_fanout_constraint}: {br}"
+
         return (
             f"Reduced critical path depth via ABC restructuring (balance/resyn2). "
-            f"{change} Design updated; verify with check_equivalence."
+            f"{change} Design updated; verify with check_equivalence.{rebuf}"
         )
 
     def check_equivalence(self, reference: Optional[str] = None) -> str:
@@ -323,6 +337,7 @@ class EDAEngine:
         """Clear state."""
         self._loaded_filepath = None
         self._original_filepath = None
+        self._max_fanout_constraint = None
 
     @property
     def is_design_loaded(self) -> bool:

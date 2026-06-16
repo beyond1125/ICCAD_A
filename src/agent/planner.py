@@ -41,10 +41,6 @@ _SYSTEM_PROMPT = (
     "functionality (e.g. 'make sure nothing changes functionally', 'ensure "
     "functional equivalence'), call check_equivalence after the transformation "
     "to formally verify the result before writing the design, and report the outcome. "
-    "Structural constraints (such as a maximum fanout from insert_buffers) must hold "
-    "on the FINAL written netlist. Logic-restructuring tools like reduce_depth can "
-    "undo a previously applied fanout limit, so if you restructure the logic after "
-    "inserting buffers, re-run insert_buffers before writing the design. "
     "Do not discuss scoring, judging, or the evaluation process."
 )
 
