@@ -295,6 +295,13 @@ int main(int argc, char** argv) {
         if (args.count("--out")) g.write_verilog(args["--out"]);
         std::cout << "Inserted " << added << " buffer(s) so no gate drives more than "
                   << mf << " loads." << std::endl;
+    } else if (action == "write_blif") {
+        if (args.count("--out")) {
+            g.write_blif(args["--out"]);
+            std::cout << "Success" << std::endl;
+        } else {
+            log_error("Error: --out required for write_blif action");
+        }
     } else if (action == "write") {
         if (args.count("--out")) {
             g.write_verilog(args["--out"]);

@@ -180,6 +180,81 @@ public:
         return true;
     }
 
+    // Emit a BLIF that ABC can read, as a flop-cut COMBINATIONAL view:
+    // each DFF's Q net becomes a primary input and its D net becomes a primary
+    // output named __D_<instance>. Comparing two such BLIFs with ABC `cec` proves
+    // the combinational logic (incl. every flop's next-state function) is identical
+    // — exactly sound for transforms that preserve the flop boundary (e.g. buffer
+    // insertion). Names are kept stable across designs so `cec` matches by name.
+    void write_blif(const std::string& filename) {
+        std::ofstream ofs(filename);
+        bool need_c0 = false, need_c1 = false;
+        auto sig = [&](const std::string& n) -> std::string {
+            if (n == "1'b0" || n == "0") { need_c0 = true; return "__const0"; }
+            if (n == "1'b1" || n == "1") { need_c1 = true; return "__const1"; }
+            return n;
+        };
+
+        std::vector<Node*> pis, pos, dffs, comb;
+        for (Node* n : all_nodes) {
+            if (n->type == NodeType::PRIMARY_INPUT) pis.push_back(n);
+            else if (n->type == NodeType::PRIMARY_OUTPUT) pos.push_back(n);
+            else if (n->type == NodeType::GATE) {
+                if (n->gate_type == GateType::DFF) dffs.push_back(n);
+                else comb.push_back(n);
+            }
+        }
+
+        ofs << ".model top\n.inputs";
+        for (Node* p : pis) ofs << " " << p->name;
+        for (Node* d : dffs) if (!d->outputs.empty()) ofs << " " << d->outputs[0]->name; // Q nets
+        ofs << "\n.outputs";
+        for (Node* p : pos) ofs << " " << p->name;
+        for (Node* d : dffs) ofs << " __D_" << d->name;
+        ofs << "\n";
+
+        for (Node* g : comb) {
+            if (g->outputs.empty()) continue;
+            std::string y = g->outputs[0]->name;
+            std::vector<std::string> in;
+            for (Node* i : g->inputs) in.push_back(sig(i->name));
+            size_t k = in.size();
+            ofs << ".names";
+            for (auto& s : in) ofs << " " << s;
+            ofs << " " << y << "\n";
+            switch (g->gate_type) {
+                case GateType::BUF:  ofs << "1 1\n"; break;
+                case GateType::NOT:  ofs << "0 1\n"; break;
+                case GateType::AND:  ofs << std::string(k, '1') << " 1\n"; break;
+                case GateType::NOR:  ofs << std::string(k, '0') << " 1\n"; break;
+                case GateType::OR:
+                    for (size_t j = 0; j < k; ++j) { std::string c(k, '-'); c[j] = '1'; ofs << c << " 1\n"; }
+                    break;
+                case GateType::NAND:
+                    for (size_t j = 0; j < k; ++j) { std::string c(k, '-'); c[j] = '0'; ofs << c << " 1\n"; }
+                    break;
+                case GateType::XOR: case GateType::XNOR: {
+                    bool want_odd = (g->gate_type == GateType::XOR);
+                    for (size_t m = 0; m < (1u << k); ++m) {
+                        int par = 0; std::string c(k, '0');
+                        for (size_t b = 0; b < k; ++b) if (m & (1u << b)) { c[b] = '1'; par ^= 1; }
+                        if ((par == 1) == want_odd) ofs << c << " 1\n";
+                    }
+                    break;
+                }
+                default: break;
+            }
+        }
+        // Tap each DFF's D net out as a per-instance primary output.
+        for (Node* d : dffs) {
+            std::string dn = d->inputs.empty() ? "__const0" : sig(d->inputs[0]->name);
+            ofs << ".names " << dn << " __D_" << d->name << "\n1 1\n";
+        }
+        if (need_c0) ofs << ".names __const0\n";
+        if (need_c1) ofs << ".names __const1\n1\n";
+        ofs << ".end\n";
+    }
+
     // Insert BUF gates so that no gate drives more than max_fanout loads, building
     // a balanced buffer tree for each over-driven net. Functionally transparent
     // (BUF out = in). Only nets driven by a GATE are buffered; primary-input nets
