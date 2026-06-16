@@ -185,8 +185,7 @@ void VerilogParser::process_statement(const std::string& stmt, Graph& graph) {
                 inst_name.erase(inst_name.find_last_not_of(" ") + 1);
                 
                 std::string ports_str = s.substr(open_paren + 1, close_paren - open_paren - 1);
-                auto ports = parse_signal_list(ports_str);
-                
+
                 if (inst_name.empty()) {
                     static int anon_count = 0;
                     inst_name = "anon_" + std::to_string(anon_count++);
@@ -194,16 +193,43 @@ void VerilogParser::process_statement(const std::string& stmt, Graph& graph) {
 
                 Node* gate_node = graph.get_or_create_node(inst_name, NodeType::GATE);
                 gate_node->gate_type = gt;
-                
-                if (gt == GateType::DFF) {
-                    if (ports.size() >= 2) {
-                        Node* q_node = graph.get_or_create_node(ports[0], NodeType::SIGNAL);
-                        Node* d_node = graph.get_or_create_node(ports[1], NodeType::SIGNAL);
-                        graph.add_edge(gate_node, q_node);
-                        graph.add_edge(d_node, gate_node);
+
+                // Detect named-port connections, e.g. ".CK(n0), .D(n244), .Q(n10)".
+                // DFFs in these netlists use this style (with constants like 1'b1).
+                std::regex named_port_regex(R"(\.(\w+)\s*\(\s*([^()]*?)\s*\))");
+                auto np_begin = std::sregex_iterator(ports_str.begin(), ports_str.end(), named_port_regex);
+                auto np_end = std::sregex_iterator();
+
+                if (np_begin != np_end) {
+                    // Named-port instance: preserve every pin for faithful write-back,
+                    // and only build graph edges for data pins (D -> in, Q -> out).
+                    // Control pins (CK/RN/SN) and constants get no combinational edge,
+                    // keeping depth/path semantics identical to before.
+                    for (std::sregex_iterator it = np_begin; it != np_end; ++it) {
+                        std::string pin = (*it)[1];
+                        std::string sig = (*it)[2];
+                        bool is_const = sig.find('\'') != std::string::npos;
+                        bool is_out = (pin == "Q" || pin == "QN");
+                        bool is_data_in = (gt == GateType::DFF) ? (pin == "D")
+                                                               : (!is_out);
+                        int edge_dir = 0;
+                        if (!is_const) {
+                            Node* sig_node = graph.get_or_create_node(sig, NodeType::SIGNAL);
+                            if (is_out) { graph.add_edge(gate_node, sig_node); edge_dir = 2; }
+                            else if (is_data_in) { graph.add_edge(sig_node, gate_node); edge_dir = 1; }
+                        }
+                        gate_node->pin_conns.push_back({pin, sig, is_const, edge_dir});
                     }
                 } else {
-                    if (!ports.empty()) {
+                    auto ports = parse_signal_list(ports_str);
+                    if (gt == GateType::DFF) {
+                        if (ports.size() >= 2) {
+                            Node* q_node = graph.get_or_create_node(ports[0], NodeType::SIGNAL);
+                            Node* d_node = graph.get_or_create_node(ports[1], NodeType::SIGNAL);
+                            graph.add_edge(gate_node, q_node);
+                            graph.add_edge(d_node, gate_node);
+                        }
+                    } else if (!ports.empty()) {
                         Node* out_node = graph.get_or_create_node(ports[0], NodeType::SIGNAL);
                         graph.add_edge(gate_node, out_node);
                         for (size_t i = 1; i < ports.size(); ++i) {
@@ -243,9 +269,25 @@ int main(int argc, char** argv) {
     } else if (action == "calc_depth") {
         int d = g.calculate_depth(args["--start"], args["--end"]);
         std::cout << "Depth: " << d << std::endl;
+    } else if (action == "get_critical_path") {
+        std::cout << g.get_critical_path(args["--start"], args["--end"]) << std::endl;
     } else if (action == "count_paths") {
         int c = g.count_paths(args["--start"], args["--end"], args["--avoid"]);
         std::cout << "Paths: " << c << std::endl;
+    } else if (action == "list_paths") {
+        std::cout << g.find_all_paths(args["--start"], args["--end"], args["--avoid"]) << std::endl;
+    } else if (action == "count_fanin") {
+        int c = g.count_fanin_gates(args["--node"]);
+        std::cout << "Fanin Gates: " << c << std::endl;
+    } else if (action == "count_fanout") {
+        int c = g.count_fanout_gates(args["--node"]);
+        std::cout << "Fanout Gates: " << c << std::endl;
+    } else if (action == "get_fanin_cone") {
+        std::cout << g.get_fanin_cone(args["--node"]) << std::endl;
+    } else if (action == "get_fanout_cone") {
+        std::cout << g.get_fanout_cone(args["--node"]) << std::endl;
+    } else if (action == "get_fanin_depth") {
+        std::cout << "Fanin Depth: " << g.get_fanin_depth(args["--node"]) << std::endl;
     } else if (action == "get_info") {
         std::cout << g.get_node_info(args["--node"]) << std::endl;
     } else if (action == "list_nodes") {
@@ -257,6 +299,19 @@ int main(int argc, char** argv) {
         } else {
             log_error("Failure: Could not replace gate " + (args.count("--target") ? args["--target"] : "unknown"));
             std::cout << "Failure" << std::endl;
+        }
+    } else if (action == "insert_buffers") {
+        int mf = args.count("--max_fanout") ? std::stoi(args["--max_fanout"]) : 4;
+        int added = g.insert_buffers(mf);
+        if (args.count("--out")) g.write_verilog(args["--out"]);
+        std::cout << "Inserted " << added << " buffer(s) so no gate drives more than "
+                  << mf << " loads." << std::endl;
+    } else if (action == "write_blif") {
+        if (args.count("--out")) {
+            g.write_blif(args["--out"]);
+            std::cout << "Success" << std::endl;
+        } else {
+            log_error("Error: --out required for write_blif action");
         }
     } else if (action == "write") {
         if (args.count("--out")) {
@@ -271,7 +326,7 @@ int main(int argc, char** argv) {
             if (n->type == NodeType::GATE) counts[n->gate_type]++;
         }
         std::cout << "Gate counts:\n";
-        std::vector<GateType> types = {GateType::NOT, GateType::AND, GateType::OR, GateType::XOR, GateType::NOR, GateType::NAND, GateType::BUF, GateType::DFF};
+        std::vector<GateType> types = {GateType::NOT, GateType::AND, GateType::OR, GateType::XOR, GateType::NOR, GateType::NAND, GateType::XNOR, GateType::BUF, GateType::DFF};
         for (auto t : types) {
             std::cout << g.gate_type_to_string_public(t) << ": " << counts[t] << "\n";
         }

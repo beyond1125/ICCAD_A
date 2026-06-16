@@ -56,11 +56,11 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "analyze_depth",
+            "name": "analyze_critical_path",
             "description": (
-                "Compute the maximum combinational logic depth (critical-path length in "
-                "gate levels) from start_node to end_node. Returns the depth count and "
-                "an example longest path."
+                "Identify the critical path (the longest combinational path in terms of "
+                "gate levels) between a specific start_node and end_node. Returns the "
+                "maximum gate-level depth and the specific sequence of nodes along the path."
             ),
             "parameters": {
                 "type": "object",
@@ -75,6 +75,31 @@ EDA_TOOLS: List[Dict[str, Any]] = [
                     },
                 },
                 "required": ["start_node", "end_node"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_depth",
+            "description": (
+                "Compute the maximum combinational logic depth (critical-path length in "
+                "gate levels) to end_node. Use this for general depth queries where the "
+                "full path of nodes is not required."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start_node": {
+                        "type": "string",
+                        "description": "Optional source signal name or primary input.",
+                    },
+                    "end_node": {
+                        "type": "string",
+                        "description": "Sink signal name or primary output.",
+                    },
+                },
+                "required": ["end_node"],
             },
         },
     },
@@ -103,6 +128,106 @@ EDA_TOOLS: List[Dict[str, Any]] = [
                     },
                 },
                 "required": ["start_node", "end_node"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "count_fanin_gates",
+            "description": (
+                "Count the total number of gate instances in the transitive fanin cone "
+                "(all gates that drive this node, directly or indirectly)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The target signal or gate name.",
+                    }
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "count_fanout_gates",
+            "description": (
+                "Count the total number of gate instances in the transitive fanout cone "
+                "(all gates driven by this node, directly or indirectly)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The target signal or gate name.",
+                    }
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_fanin_cone",
+            "description": (
+                "Retrieve the complete list of nodes (signals and gates) in the "
+                "transitive fanin cone of a specific node."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The target signal or gate name.",
+                    }
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_fanout_cone",
+            "description": (
+                "Retrieve the complete list of nodes (signals and gates) in the "
+                "transitive fanout cone of a specific node."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The target signal or gate name.",
+                    }
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_fanin_depth",
+            "description": (
+                "Compute the maximum combinational logic depth within the "
+                "transitive fanin cone of a specific primary output or signal."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The target signal or gate name.",
+                    }
+                },
+                "required": ["node_name"],
             },
         },
     },
@@ -150,6 +275,56 @@ EDA_TOOLS: List[Dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "insert_buffers",
+            "description": (
+                "Insert buffer (BUF) gates so that no gate drives more than a given number "
+                "of loads (fanout limit), building a balanced buffer tree where needed. "
+                "Functionally equivalent to the original. Call this for requests like "
+                "'insert buffers so no gate drives more than 4 loads' or 'fanout optimization "
+                "with maximum fanout 4'. The transformed netlist becomes the current design."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "max_fanout": {
+                        "type": "integer",
+                        "description": "Maximum number of loads any single gate may drive (e.g. 4).",
+                    }
+                },
+                "required": ["max_fanout"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_equivalence",
+            "description": (
+                "Formally verify that the current (possibly transformed) design is "
+                "functionally equivalent to a reference netlist using Berkeley ABC. "
+                "By default the reference is the original as-loaded netlist. Call this "
+                "after any functionality-preserving transformation (buffer insertion, "
+                "optimization, remapping, etc.) to confirm nothing changed functionally. "
+                "Returns EQUIVALENT or NOT EQUIVALENT."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reference": {
+                        "type": "string",
+                        "description": (
+                            "Optional path to a reference Verilog netlist to compare "
+                            "against. Omit to compare against the original loaded design."
+                        ),
+                    }
+                },
                 "required": [],
             },
         },

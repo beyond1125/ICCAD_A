@@ -13,6 +13,7 @@ as the tool result so the LLM can recover without crashing the process.
 """
 
 import logging
+import sys
 from typing import Any, Callable, Dict, List
 
 from utils.config import Config
@@ -33,7 +34,14 @@ _SYSTEM_PROMPT = (
     "When writing or saving a design, ALWAYS save the output file to the same "
     "testcase directory (e.g., testcase/test01/test01_out.v). "
     "After receiving tool outputs, synthesise a clear, concise technical answer "
-    "for the user. Do not discuss scoring, judging, or the evaluation process."
+    "for the user. IMPORTANT: Always use the exact numerical values, counts, "
+    "and lists provided directly by the tool outputs. Do not attempt to "
+    "re-count items or recalculate values from text lists yourself. "
+    "Whenever a request asks you to transform the design while preserving "
+    "functionality (e.g. 'make sure nothing changes functionally', 'ensure "
+    "functional equivalence'), call check_equivalence after the transformation "
+    "to formally verify the result before writing the design, and report the outcome. "
+    "Do not discuss scoring, judging, or the evaluation process."
 )
 
 
@@ -50,11 +58,19 @@ class Planner:
             "load_design":   engine.load_design,
             "write_design":  engine.write_design,
             "analyze_depth": engine.analyze_depth,
+            "analyze_critical_path": engine.analyze_critical_path,
             "find_paths":    engine.find_paths,
             "get_node_info": engine.get_node_info,
             "list_nodes":    engine.list_nodes,
             "replace_gate":  engine.replace_gate,
             "count_gates":   engine.count_gates,
+            "count_fanin_gates": engine.count_fanin_gates,
+            "insert_buffers": engine.insert_buffers,
+            "check_equivalence": engine.check_equivalence,
+            "count_fanout_gates": engine.count_fanout_gates,
+            "get_fanin_cone": engine.get_fanin_cone,
+            "get_fanout_cone": engine.get_fanout_cone,
+            "get_fanin_depth": engine.get_fanin_depth,
         }
 
     # ------------------------------------------------------------------ public

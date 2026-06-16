@@ -26,4 +26,5 @@ config.yaml.local.bak
 .cursorignore
 
 tools/abc
+/abc/
 venv

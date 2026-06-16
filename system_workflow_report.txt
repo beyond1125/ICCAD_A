@@ -1,0 +1,72 @@
+# ICCAD 2026 Problem A: C++ Machine Technical Report
+
+This document outlines the architecture, API, and implementation details of the C++ EDA engine core and its integration with the AI agent.
+
+## System Architecture
+
+The system follows a tiered architecture:
+1.  **C++ Core (`parser/parser.cpp`, `parser.hpp`)**: High-performance graph-based netlist representation and algorithmic implementation.
+2.  **Python Engine Wrapper (`eda_engine/engine.py`)**: Subprocess-based bridge between Python and the C++ binary.
+3.  **AI Agent (`agent/`)**: Planner and tool specifications that enable LLMs to interact with the engine.
+
+---
+
+## C++ Core API (Actions)
+
+The C++ machine is invoked via CLI with the following actions:
+
+### 1. Design Management
+-   **`load`**: Parses a Verilog-1995 gate-level netlist into an in-memory graph.
+    -   *Implementation*: Regex-based lexical analysis and statement-by-statement parsing. Supports bus expansion (e.g., `input [3:0] n`).
+-   **`write`**: Emits the current in-memory graph back to a Verilog file.
+    -   *Implementation*: Reconstructs module headers, signal declarations (grouping bits back into vectors), and gate instantiations.
+
+### 2. Structural Analysis
+-   **`count_gates`**: Reports total gate counts broken down by type.
+    -   *Implementation*: Iterates through all nodes and tallies those with `NodeType::GATE`.
+-   **`get_info`**: Provides immediate connectivity for a node.
+    -   *Implementation*: Returns node type, gate type (if applicable), fanin/fanout counts, and immediate neighbor names.
+
+### 3. Path & Depth Analysis
+-   **`calc_depth`**: Computes the longest combinational path depth.
+    -   *Implementation*: Uses **Memory-efficient Dynamic Programming (DP)**. Complex-path depth is computed in $O(V+E)$ time by caching sub-results. Returns `-1` if unreachable.
+-   **`get_critical_path`**: Identifies the specific sequence of nodes along the longest path.
+    -   *Implementation*: Similar to `calc_depth` but maintains a `next_node` pointer for path reconstruction.
+-   **`count_paths`**: Counts all possible combinational paths.
+    -   *Implementation*: Recursive DFS with memoization.
+-   **`list_paths`**: Enumerates the full node sequence for all paths.
+    -   *Implementation*: Depth-First Search (DFS). Includes a 100-path safety truncation.
+
+### 4. Cone Analysis
+-   **`get_fanin_cone` / `get_fanout_cone`**: Extracts the transitive cone of a node.
+    -   *Implementation*: Breadth-First Search (BFS) / Depth-First Search (DFS) traversal through the graph edges.
+-   **`count_fanin` / `count_fanout`**: Counts the number of gate instances within the transitive cone.
+    -   *Implementation*: Traverses the cone and filters for `GATE` types, excluding the starting node.
+-   **`get_fanin_depth`**: Computes the logic depth considering only the fanin cone of a specific node.
+    -   *Implementation*: Backward-traversal DP starting from the target node to primary inputs.
+
+---
+
+## AI Agent Integration (Planner Tools)
+
+The agent maps natural language intents to the following high-level tools:
+
+| Intent Type | Tool Name | C++ Action |
+| :--- | :--- | :--- |
+| Load Design | `load_design` | `load` |
+| Save Design | `write_design` | `write` |
+| Gate Statistics | `count_gates` | `count_gates` |
+| Logical Depth | `analyze_depth` | `calc_depth` |
+| Critical Path | `analyze_critical_path` | `get_critical_path` |
+| Path Existence/Listing | `find_paths` | `list_paths` |
+| Connectivity Info | `get_node_info` | `get_info` |
+| Transitive Fanin | `get_fanin_cone` | `get_fanin_cone` |
+| Transitive Fanout | `get_fanout_cone` | `get_fanout_cone` |
+| Fanin Depth | `get_fanin_depth` | `get_fanin_depth` |
+| Fanin Gate Count | `count_fanin_gates` | `count_fanin` |
+| Fanout Gate Count | `count_fanout_gates` | `count_fanout` |
+
+## Implementation Principles
+-   **Precision**: All gate-level depths ignore signal/wire nodes, counting only logic gates.
+-   **Performance**: DP-based algorithms ensure that even with designs exceeding 15,000 gates (like `test14`), depth and path counts are computed nearly instantaneously.
+-   **Robustness**: Handles bus signals (e.g., `n3[0]`) as discrete nodes in the graph to maintain connectivity accuracy.
