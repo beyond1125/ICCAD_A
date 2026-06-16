@@ -238,6 +238,23 @@ public:
         return true;
     }
 
+    // Rename a node (gate instance, wire, or signal) and update every reference.
+    // Edge-based references update automatically (the graph stores pointers); named
+    // DFF pin connections store the name as a string, so those are updated too.
+    // Returns false if the old name is missing or the new name already exists.
+    bool rename_node(const std::string& old_name, const std::string& new_name) {
+        if (old_name == new_name) return true;
+        if (!nodes.count(old_name) || nodes.count(new_name)) return false;
+        Node* n = nodes[old_name];
+        nodes.erase(old_name);
+        n->name = new_name;
+        nodes[new_name] = n;
+        for (Node* m : all_nodes)
+            for (PinConn& pc : m->pin_conns)
+                if (pc.signal == old_name) pc.signal = new_name;
+        return true;
+    }
+
     // Emit a BLIF that ABC can read, as a flop-cut COMBINATIONAL view:
     // each DFF's Q net becomes a primary input and its D net becomes a primary
     // output named __D_<instance>. Comparing two such BLIFs with ABC `cec` proves

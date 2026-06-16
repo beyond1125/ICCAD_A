@@ -34,9 +34,9 @@ void VerilogParser::parse(const std::string& filename, Graph& graph) {
 
 std::string VerilogParser::strip_comments(const std::string& content) {
     std::string result = content;
-    std::regex line_comment("//.*");
+    static const std::regex line_comment("//.*");
     result = std::regex_replace(result, line_comment, "");
-    std::regex multi_line_comment("/\\*[^*]*\\*+([^/*][^*]*\\*+)*/");
+    static const std::regex multi_line_comment("/\\*[^*]*\\*+([^/*][^*]*\\*+)*/");
     result = std::regex_replace(result, multi_line_comment, "");
     return result;
 }
@@ -80,12 +80,12 @@ std::vector<std::string> VerilogParser::expand_bus(const std::string& base, int 
 
 std::vector<std::string> VerilogParser::parse_signal_list(const std::string& list_str) {
     std::vector<std::string> signals;
-    std::regex sig_regex(R"(\w+(?:\[\d+(?::\d+)?\])?)");
+    static const std::regex sig_regex(R"(\w+(?:\[\d+(?::\d+)?\])?)");
     auto words_begin = std::sregex_iterator(list_str.begin(), list_str.end(), sig_regex);
     auto words_end = std::sregex_iterator();
     for (std::sregex_iterator i = words_begin; i != words_end; ++i) {
         std::string raw = (*i).str();
-        std::regex range_regex(R"((\w+)\s*\[(\d+):(\d+)\])");
+        static const std::regex range_regex(R"((\w+)\s*\[(\d+):(\d+)\])");
         std::smatch match;
         if (std::regex_search(raw, match, range_regex)) {
             auto expanded = expand_bus(match[1], std::stoi(match[2]), std::stoi(match[3]));
@@ -98,7 +98,7 @@ std::vector<std::string> VerilogParser::parse_signal_list(const std::string& lis
 }
 
 void VerilogParser::process_statement(const std::string& stmt, Graph& graph) {
-    std::regex ws(R"(\s+)");
+    static const std::regex ws(R"(\s+)");
     std::string s = std::regex_replace(stmt, ws, " ");
     s.erase(0, s.find_first_not_of(" "));
     s.erase(s.find_last_not_of(" ") + 1);
@@ -111,7 +111,7 @@ void VerilogParser::process_statement(const std::string& stmt, Graph& graph) {
     ss_fw >> first_word;
 
     if (s.substr(0, 6) == "module") {
-        std::regex mod_name_regex(R"(module\s+(\w+))");
+        static const std::regex mod_name_regex(R"(module\s+(\w+))");
         std::smatch match;
         if (std::regex_search(s, match, mod_name_regex)) {
             graph.module_name = match[1];
@@ -119,7 +119,7 @@ void VerilogParser::process_statement(const std::string& stmt, Graph& graph) {
     }
 
     // Process input, output, wire
-    std::regex kw_regex(R"(\b(input|output|wire)\b)");
+    static const std::regex kw_regex(R"(\b(input|output|wire)\b)");
     auto kw_begin = std::sregex_iterator(s.begin(), s.end(), kw_regex);
     auto kw_end = std::sregex_iterator();
 
@@ -139,7 +139,7 @@ void VerilogParser::process_statement(const std::string& stmt, Graph& graph) {
 
         // Check for range [msb:lsb]
         int msb = -1, lsb = -1;
-        std::regex range_regex(R"(^\s*\[(\d+):(\d+)\])");
+        static const std::regex range_regex(R"(^\s*\[(\d+):(\d+)\])");
         std::smatch range_match;
         if (std::regex_search(current_decl, range_match, range_regex)) {
             msb = std::stoi(range_match[1]);
@@ -148,12 +148,12 @@ void VerilogParser::process_statement(const std::string& stmt, Graph& graph) {
         }
 
         // Parse comma-separated names
-        std::regex name_regex(R"(\w+(?:\s*\[\d+\])?)");
+        static const std::regex name_regex(R"(\w+(?:\s*\[\d+\])?)");
         auto names_begin = std::sregex_iterator(current_decl.begin(), current_decl.end(), name_regex);
         auto names_end = std::sregex_iterator();
         for (std::sregex_iterator j = names_begin; j != names_end; ++j) {
             std::string raw_name = (*j).str();
-            std::regex unpacked_regex(R"((\w+)\s*\[(\d+)\])");
+            static const std::regex unpacked_regex(R"((\w+)\s*\[(\d+)\])");
             std::smatch unpacked_match;
             if (std::regex_search(raw_name, unpacked_match, unpacked_regex)) {
                 std::string base = unpacked_match[1];
@@ -196,7 +196,7 @@ void VerilogParser::process_statement(const std::string& stmt, Graph& graph) {
 
                 // Detect named-port connections, e.g. ".CK(n0), .D(n244), .Q(n10)".
                 // DFFs in these netlists use this style (with constants like 1'b1).
-                std::regex named_port_regex(R"(\.(\w+)\s*\(\s*([^()]*?)\s*\))");
+                static const std::regex named_port_regex(R"(\.(\w+)\s*\(\s*([^()]*?)\s*\))");
                 auto np_begin = std::sregex_iterator(ports_str.begin(), ports_str.end(), named_port_regex);
                 auto np_end = std::sregex_iterator();
 
@@ -306,6 +306,12 @@ int main(int argc, char** argv) {
         if (args.count("--out")) g.write_verilog(args["--out"]);
         std::cout << "Inserted " << added << " buffer(s) so no gate drives more than "
                   << mf << " loads." << std::endl;
+    } else if (action == "rename") {
+        bool ok = g.rename_node(args["--old"], args["--new"]);
+        if (ok && args.count("--out")) g.write_verilog(args["--out"]);
+        if (ok) std::cout << "Renamed " << args["--old"] << " to " << args["--new"] << "." << std::endl;
+        else std::cout << "Failure: node '" << args["--old"]
+                       << "' not found or new name already in use." << std::endl;
     } else if (action == "sweep") {
         int removed = g.sweep_dangling();
         if (args.count("--out")) g.write_verilog(args["--out"]);

@@ -340,6 +340,26 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "rename_node",
+            "description": (
+                "Rename a gate instance, wire, or signal and update all references. "
+                "Functionality is preserved (pure naming change). Call this for "
+                "requests like 'rename gate g0 to renamed_gate', 'change the identifier "
+                "of wire n74 to renamed_wire', or 'update the name of signal n7431'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "old_name": {"type": "string", "description": "Current node name."},
+                    "new_name": {"type": "string", "description": "New name to assign."},
+                },
+                "required": ["old_name", "new_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "check_equivalence",
             "description": (
                 "Formally verify that the current (possibly transformed) design is "

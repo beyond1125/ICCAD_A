@@ -284,6 +284,21 @@ class EDAEngine:
             f"{change} Design updated; verify with check_equivalence.{rebuf}"
         )
 
+    def rename_node(self, old_name: str, new_name: str) -> str:
+        """Rename a gate instance, wire, or signal and update all references.
+
+        Functionally equivalent (pure naming change). Handles phrasings like 'rename
+        gate g0 to renamed_gate', 'change the identifier of wire n74', and 'update the
+        name of signal n7431'.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        work = self._session_path("renamed")
+        res = self._run_action("rename", old=old_name, new=new_name, out=work)
+        if res.startswith("Renamed") and os.path.isfile(work):
+            self._loaded_filepath = work
+        return res
+
     def remove_dangling(self) -> str:
         """Remove unused/dangling logic that does not feed any output or flip-flop.
 
