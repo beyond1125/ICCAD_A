@@ -246,6 +246,8 @@ int main(int argc, char** argv) {
     } else if (action == "count_paths") {
         int c = g.count_paths(args["--start"], args["--end"], args["--avoid"]);
         std::cout << "Paths: " << c << std::endl;
+    } else if (action == "list_paths") {
+        std::cout << g.find_all_paths(args["--start"], args["--end"], args["--avoid"]) << std::endl;
     } else if (action == "count_fanin") {
         int c = g.count_fanin_gates(args["--node"]);
         std::cout << "Fanin Gates: " << c << std::endl;
@@ -274,7 +276,7 @@ int main(int argc, char** argv) {
             if (n->type == NodeType::GATE) counts[n->gate_type]++;
         }
         std::cout << "Gate counts:\n";
-        std::vector<GateType> types = {GateType::NOT, GateType::AND, GateType::OR, GateType::XOR, GateType::NOR, GateType::NAND, GateType::BUF, GateType::DFF};
+        std::vector<GateType> types = {GateType::NOT, GateType::AND, GateType::OR, GateType::XOR, GateType::NOR, GateType::NAND, GateType::XNOR, GateType::BUF, GateType::DFF};
         for (auto t : types) {
             std::cout << g.gate_type_to_string_public(t) << ": " << counts[t] << "\n";
         }

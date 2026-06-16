@@ -103,8 +103,8 @@ class EDAEngine:
     def find_paths(
         self, start_node: str, end_node: str, avoid_node: Optional[str] = None
     ) -> str:
-        """Return path count between two nodes."""
-        return self._run_action("count_paths", start=start_node, end=end_node, avoid=avoid_node or "")
+        """Return all paths between two nodes."""
+        return self._run_action("list_paths", start=start_node, end=end_node, avoid=avoid_node or "")
 
     def count_fanin_gates(self, node_name: str) -> str:
         """Count gates in the fanin cone of a specific node."""

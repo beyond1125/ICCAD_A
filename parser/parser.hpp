@@ -102,6 +102,34 @@ public:
         return count_paths_recursive(nodes[start], nodes[end], avoid_node, memo);
     }
 
+    std::string find_all_paths(const std::string& start, const std::string& end, const std::string& avoid = "") {
+        if (nodes.find(start) == nodes.end() || nodes.find(end) == nodes.end()) return "Error: Start or end node not found.";
+        Node* start_node = nodes[start];
+        Node* end_node = nodes[end];
+        Node* avoid_node = avoid.empty() ? nullptr : (nodes.count(avoid) ? nodes[avoid] : nullptr);
+
+        std::vector<std::vector<Node*>> all_paths;
+        std::vector<Node*> current_path;
+        find_all_paths_recursive(start_node, end_node, avoid_node, current_path, all_paths);
+
+        if (all_paths.empty()) return "No paths found.";
+
+        std::stringstream ss;
+        ss << "Found " << all_paths.size() << " paths:\n";
+        for (size_t i = 0; i < all_paths.size(); ++i) {
+            ss << "Path " << i + 1 << ": ";
+            for (size_t j = 0; j < all_paths[i].size(); ++j) {
+                ss << all_paths[i][j]->name << (j == all_paths[i].size() - 1 ? "" : " -> ");
+            }
+            ss << "\n";
+            if (i >= 100) { // Limit to 100 paths to avoid huge output
+                ss << "... (truncated)\n";
+                break;
+            }
+        }
+        return ss.str();
+    }
+
     int count_fanin_gates(const std::string& name) {
         if (nodes.find(name) == nodes.end()) return 0;
         std::unordered_set<Node*> visited;
@@ -243,6 +271,19 @@ private:
             count += count_paths_recursive(next, target, avoid, memo);
         }
         return memo[curr] = count;
+    }
+
+    void find_all_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, std::vector<std::vector<Node*>>& all_paths) {
+        if (curr == avoid) return;
+        path.push_back(curr);
+        if (curr == target) {
+            all_paths.push_back(path);
+        } else {
+            for (auto next : curr->outputs) {
+                find_all_paths_recursive(next, target, avoid, path, all_paths);
+            }
+        }
+        path.pop_back();
     }
 
     int count_fanin_gates_recursive(Node* curr, std::unordered_set<Node*>& visited) {
