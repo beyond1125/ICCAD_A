@@ -59,22 +59,23 @@ EDA_TOOLS: List[Dict[str, Any]] = [
             "name": "analyze_depth",
             "description": (
                 "Compute the maximum combinational logic depth (critical-path length in "
-                "gate levels) from start_node to end_node. Returns the depth count and "
-                "an example longest path."
+                "gate levels) to end_node. If start_node is provided, compute depth "
+                "from start_node to end_node. If omitted, compute the maximum depth "
+                "from any primary input to end_node."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "start_node": {
                         "type": "string",
-                        "description": "Source signal name or primary input.",
+                        "description": "Optional source signal name or primary input.",
                     },
                     "end_node": {
                         "type": "string",
                         "description": "Sink signal name or primary output.",
                     },
                 },
-                "required": ["start_node", "end_node"],
+                "required": ["end_node"],
             },
         },
     },

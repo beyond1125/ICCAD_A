@@ -93,9 +93,12 @@ class EDAEngine:
         """Return structural information about *node_name*."""
         return self._run_action("get_info", node=node_name)
 
-    def analyze_depth(self, start_node: str, end_node: str) -> str:
+    def analyze_depth(self, start_node: Optional[str] = None, end_node: str = "") -> str:
         """Calculate combinational depth."""
-        return self._run_action("calc_depth", start=start_node, end=end_node)
+        kwargs = {"end": end_node}
+        if start_node:
+            kwargs["start"] = start_node
+        return self._run_action("calc_depth", **kwargs)
 
     def find_paths(
         self, start_node: str, end_node: str, avoid_node: Optional[str] = None

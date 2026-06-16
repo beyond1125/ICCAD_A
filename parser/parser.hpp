@@ -66,10 +66,32 @@ public:
     // --- Algorithms ---
 
     int calculate_depth(const std::string& start, const std::string& end) {
-        if (nodes.find(start) == nodes.end() || nodes.find(end) == nodes.end()) return -1;
+        if (nodes.find(end) == nodes.end()) return -1;
         
         std::unordered_map<Node*, int> memo;
+        if (start.empty()) {
+            return get_node_depth_backward(nodes[end], memo);
+        }
+        
+        if (nodes.find(start) == nodes.end()) return -1;
         return get_max_depth_recursive(nodes[start], nodes[end], memo);
+    }
+
+    int get_node_depth_backward(Node* curr, std::unordered_map<Node*, int>& memo) {
+        if (!curr) return 0;
+        if (curr->type == NodeType::PRIMARY_INPUT) return 0;
+        if (memo.count(curr)) return memo[curr];
+
+        int max_d = 0;
+        for (auto in : curr->inputs) {
+            int d = get_node_depth_backward(in, memo);
+            if (curr->type == NodeType::GATE) {
+                max_d = std::max(max_d, d + 1);
+            } else {
+                max_d = std::max(max_d, d);
+            }
+        }
+        return memo[curr] = max_d;
     }
 
     int count_paths(const std::string& start, const std::string& end, const std::string& avoid = "") {
@@ -95,6 +117,8 @@ public:
         } else {
             ss << "Signal " << n->name << " [" << (n->type == NodeType::PRIMARY_INPUT ? "PI" : n->type == NodeType::PRIMARY_OUTPUT ? "PO" : "Wire") << "]";
         }
+        ss << "\n  Fanin count: " << n->inputs.size();
+        ss << "\n  Fanout count: " << n->outputs.size();
         ss << "\n  Inputs: ";
         for (auto in : n->inputs) ss << in->name << " ";
         ss << "\n  Outputs: ";

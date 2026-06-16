@@ -33,7 +33,10 @@ _SYSTEM_PROMPT = (
     "When writing or saving a design, ALWAYS save the output file to the same "
     "testcase directory (e.g., testcase/test01/test01_out.v). "
     "After receiving tool outputs, synthesise a clear, concise technical answer "
-    "for the user. Do not discuss scoring, judging, or the evaluation process."
+    "for the user. IMPORTANT: Always use the exact numerical values, counts, "
+    "and lists provided directly by the tool outputs. Do not attempt to "
+    "re-count items or recalculate values from text lists yourself. "
+    "Do not discuss scoring, judging, or the evaluation process."
 )
 
 
