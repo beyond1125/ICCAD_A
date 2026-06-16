@@ -284,6 +284,22 @@ class EDAEngine:
             f"{change} Design updated; verify with check_equivalence.{rebuf}"
         )
 
+    def remove_dangling(self) -> str:
+        """Remove unused/dangling logic that does not feed any output or flip-flop.
+
+        Functionally equivalent (the removed logic is unobservable). The trimmed
+        netlist becomes the active design. Handles phrasings like 'trim unused wires
+        and gates', 'remove dangling gates', 'sweep out dangling gates', 'prune the
+        netlist', and 'remove floating nodes'.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        work = self._session_path("swept")
+        res = self._run_action("sweep", out=work)
+        if "Removed" in res and os.path.isfile(work):
+            self._loaded_filepath = work
+        return res
+
     def check_equivalence(self, reference: Optional[str] = None) -> str:
         """Formally verify the current design against a reference netlist with ABC.
 

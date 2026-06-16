@@ -516,6 +516,47 @@ public:
         return buf_count;
     }
 
+    // Remove dangling logic: any gate/wire that does not lie in the fanin cone of a
+    // primary output or a flip-flop is unobservable and is deleted. Primary I/O and
+    // all flip-flops are kept (matching the flop-cut equivalence model, so the result
+    // stays cec-checkable). Returns the number of gates removed.
+    int sweep_dangling() {
+        std::unordered_set<Node*> live;
+        std::vector<Node*> stack;
+        for (Node* n : all_nodes) {
+            bool seed = n->type == NodeType::PRIMARY_OUTPUT ||
+                        (n->type == NodeType::GATE && n->gate_type == GateType::DFF);
+            if (seed && live.insert(n).second) stack.push_back(n);
+        }
+        while (!stack.empty()) {
+            Node* n = stack.back(); stack.pop_back();
+            for (Node* drv : n->inputs)
+                if (live.insert(drv).second) stack.push_back(drv);
+        }
+        auto keep = [&](Node* n) {
+            return n->type == NodeType::PRIMARY_INPUT ||
+                   n->type == NodeType::PRIMARY_OUTPUT || live.count(n) > 0;
+        };
+        std::vector<Node*> newall, dead;
+        for (Node* n : all_nodes) (keep(n) ? newall : dead).push_back(n);
+        // Drop edges to removed nodes (live nodes' inputs are all live by construction;
+        // their outputs may still reference now-dead consumers).
+        for (Node* n : newall) {
+            std::vector<Node*> o, in;
+            for (Node* x : n->outputs) if (keep(x)) o.push_back(x);
+            for (Node* x : n->inputs)  if (keep(x)) in.push_back(x);
+            n->outputs.swap(o); n->inputs.swap(in);
+        }
+        int removed = 0;
+        for (Node* n : dead) {
+            if (n->type == NodeType::GATE) ++removed;
+            nodes.erase(n->name);
+            delete n;
+        }
+        all_nodes.swap(newall);
+        return removed;
+    }
+
     void write_verilog(const std::string& filename) {
         std::ofstream ofs(filename);
         

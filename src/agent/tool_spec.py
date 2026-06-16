@@ -325,6 +325,21 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "remove_dangling",
+            "description": (
+                "Remove unused/dangling logic from the netlist: any gate or wire that "
+                "does not contribute to a primary output or a flip-flop is deleted. "
+                "Functionality is preserved. Call this for requests like 'trim unused "
+                "wires and gates', 'remove dangling gates', 'sweep out dangling gates', "
+                "'prune the netlist', or 'remove floating nodes'. The trimmed netlist "
+                "becomes the current design."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "check_equivalence",
             "description": (
                 "Formally verify that the current (possibly transformed) design is "

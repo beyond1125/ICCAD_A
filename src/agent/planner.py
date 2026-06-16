@@ -67,6 +67,7 @@ class Planner:
             "count_fanin_gates": engine.count_fanin_gates,
             "insert_buffers": engine.insert_buffers,
             "reduce_depth": engine.reduce_depth,
+            "remove_dangling": engine.remove_dangling,
             "check_equivalence": engine.check_equivalence,
             "count_fanout_gates": engine.count_fanout_gates,
             "get_fanin_cone": engine.get_fanin_cone,

@@ -306,6 +306,11 @@ int main(int argc, char** argv) {
         if (args.count("--out")) g.write_verilog(args["--out"]);
         std::cout << "Inserted " << added << " buffer(s) so no gate drives more than "
                   << mf << " loads." << std::endl;
+    } else if (action == "sweep") {
+        int removed = g.sweep_dangling();
+        if (args.count("--out")) g.write_verilog(args["--out"]);
+        std::cout << "Removed " << removed << " dangling gate(s) not contributing to any output."
+                  << std::endl;
     } else if (action == "write_blif") {
         if (args.count("--out")) {
             g.write_blif(args["--out"]);
@@ -329,15 +334,26 @@ int main(int argc, char** argv) {
             else if (n->type == NodeType::PRIMARY_OUTPUT) R.get_or_create_node(n->name, NodeType::PRIMARY_OUTPUT);
         }
         R.load_logic_blif(args["--blif"]);
-        // Reattach each DFF: Q drives its original net, D is fed by __D_<inst>,
-        // and CK/RN/SN are preserved verbatim via the original pin_conns.
+        // Reattach each DFF: Q drives its original net, D is fed by the BLIF's
+        // __D_<inst> net, and CK/RN/SN are preserved verbatim via the original
+        // pin_conns. The feeder net is renamed to a neutral name first, so it can
+        // never collide with the __D_<inst> tap that write_blif emits later (the
+        // feeder is a real net that may fan out and get buffered).
         for (Node* n : g.all_nodes) {
             if (n->type == NodeType::GATE && n->gate_type == GateType::DFF) {
                 Node* d = R.get_or_create_node(n->name, NodeType::GATE);
                 d->gate_type = GateType::DFF;
                 d->pin_conns = n->pin_conns;
                 if (!n->outputs.empty()) R.add_edge(d, R.get_or_create_node(n->outputs[0]->name));
-                R.add_edge(R.get_or_create_node("__D_" + n->name), d);
+                std::string tap = "__D_" + n->name;
+                std::string feeder = n->name + "__din";
+                if (R.nodes.count(tap)) {            // rename __D_<inst> -> <inst>__din
+                    Node* fn = R.nodes[tap];
+                    R.nodes.erase(tap);
+                    fn->name = feeder;
+                    R.nodes[feeder] = fn;
+                }
+                R.add_edge(R.get_or_create_node(feeder), d);
             }
         }
         R.write_verilog(args["--out"]);
