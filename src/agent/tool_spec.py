@@ -295,7 +295,7 @@ EDA_TOOLS: List[Dict[str, Any]] = [
                 "properties": {
                     "max_fanout": {
                         "type": "integer",
-                        "description": "Maximum number of loads any single gate may drive (e.g. 4).",
+                        "description": "Max loads any single gate may drive (e.g. 4).",
                     }
                 },
                 "required": ["max_fanout"],

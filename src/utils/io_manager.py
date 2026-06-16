@@ -59,12 +59,12 @@ class IOManager:
             self._log_file.close()
         self._case_name = case_name
         self._response_id = 0
-        
+
         # Ensure the directory exists
         case_dir = f"testcase/{case_name}"
         if not os.path.exists(case_dir):
             os.makedirs(case_dir, exist_ok=True)
-            
+
         log_path = os.path.join(case_dir, f"{case_name}.log")
         self._log_file = open(log_path, "w", buffering=1)
 

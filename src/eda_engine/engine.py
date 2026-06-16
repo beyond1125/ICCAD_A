@@ -93,23 +93,23 @@ class EDAEngine:
         """Helper to run a command on the C++ parser."""
         if not self._loaded_filepath and action != "load":
              return "Error: No design loaded."
-        
+
         filepath = self._loaded_filepath or kwargs.get("filepath", "")
         if filepath:
             filepath = os.path.normpath(filepath)
 
         # Base command with input file and action
         cmd = [
-            self._parser_path, 
-            "--in", filepath, 
+            self._parser_path,
+            "--in", filepath,
             "--action", action
         ]
-        
+
         # Append other arguments as --key value
         for k, v in kwargs.items():
             if k != "filepath":
                 cmd.extend([f"--{k}", str(v)])
-        
+
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             return result.stdout.strip()
@@ -150,7 +150,9 @@ class EDAEngine:
         self, start_node: str, end_node: str, avoid_node: Optional[str] = None
     ) -> str:
         """Return all paths between two nodes."""
-        return self._run_action("list_paths", start=start_node, end=end_node, avoid=avoid_node or "")
+        return self._run_action(
+            "list_paths", start=start_node, end=end_node, avoid=avoid_node or ""
+        )
 
     def count_fanin_gates(self, node_name: str) -> str:
         """Count gates in the fanin cone of a specific node."""
@@ -245,7 +247,10 @@ class EDAEngine:
             )
         if "not equivalent" in low:
             first = out.splitlines()[0] if out else "Networks are NOT EQUIVALENT."
-            return f"NOT EQUIVALENT: the current design differs from the reference. ABC reports: {first}"
+            return (
+                "NOT EQUIVALENT: the current design differs from the reference. "
+                f"ABC reports: {first}"
+            )
         return f"Equivalence check inconclusive. ABC output: {out[:400]}"
 
     def reset(self) -> None:
