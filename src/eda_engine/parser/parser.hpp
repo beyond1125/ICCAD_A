@@ -574,6 +574,60 @@ public:
         return removed;
     }
 
+    // Gates in the transitive fanin cone of a root net. Traverses through flip-flops
+    // (following the D input) so the cone of a register output includes the logic
+    // that computes it; the visited set bounds it on sequential feedback loops.
+    std::unordered_set<Node*> fanin_cone_gates(const std::string& root) {
+        std::unordered_set<Node*> cone, vis;
+        if (!nodes.count(root)) return cone;
+        std::vector<Node*> st{nodes[root]};
+        while (!st.empty()) {
+            Node* n = st.back(); st.pop_back();
+            if (!vis.insert(n).second) continue;
+            if (n->type == NodeType::GATE) cone.insert(n);
+            for (Node* d : n->inputs) st.push_back(d);
+        }
+        return cone;
+    }
+
+    // Replace gates of a given type within the fanin cone of `root` using only the
+    // requested basis. Currently supports OR -> NAND+NOT: OR(a,b) = NAND(!a,!b).
+    // Returns the number of gates replaced, or -1 for an unsupported combination.
+    int decompose_in_cone(const std::string& root, const std::string& from_type,
+                          const std::string& basis) {
+        if (from_type != "or" || basis != "nand_not") return -1;
+        auto cone = fanin_cone_gates(root);
+        std::vector<Node*> targets;
+        for (Node* g : cone)
+            if (g->gate_type == GateType::OR && g->inputs.size() == 2) targets.push_back(g);
+
+        int ctr = 0;
+        auto fresh = [&](const std::string& pfx) {
+            std::string nm;
+            do { nm = pfx + std::to_string(ctr++); } while (nodes.count(nm));
+            return nm;
+        };
+        auto rm = [&](std::vector<Node*>& v, Node* x) {
+            v.erase(std::remove(v.begin(), v.end(), x), v.end());
+        };
+        for (Node* g : targets) {
+            Node* a = g->inputs[0];
+            Node* b = g->inputs[1];
+            rm(a->outputs, g);
+            rm(b->outputs, g);
+            Node* n1 = get_or_create_node(fresh("__dec_g"), NodeType::GATE); n1->gate_type = GateType::NOT;
+            Node* t1 = get_or_create_node(fresh("__dec_n"));
+            add_edge(a, n1); add_edge(n1, t1);
+            Node* n2 = get_or_create_node(fresh("__dec_g"), NodeType::GATE); n2->gate_type = GateType::NOT;
+            Node* t2 = get_or_create_node(fresh("__dec_n"));
+            add_edge(b, n2); add_edge(n2, t2);
+            g->inputs.clear();
+            add_edge(t1, g); add_edge(t2, g);
+            g->gate_type = GateType::NAND;       // OR(a,b) == NAND(!a,!b)
+        }
+        return (int)targets.size();
+    }
+
     void write_verilog(const std::string& filename) {
         std::ofstream ofs(filename);
         

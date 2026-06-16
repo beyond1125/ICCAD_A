@@ -69,6 +69,7 @@ class Planner:
             "reduce_depth": engine.reduce_depth,
             "remove_dangling": engine.remove_dangling,
             "rename_node": engine.rename_node,
+            "decompose_gates_in_cone": engine.decompose_gates_in_cone,
             "check_equivalence": engine.check_equivalence,
             "count_fanout_gates": engine.count_fanout_gates,
             "get_fanin_cone": engine.get_fanin_cone,

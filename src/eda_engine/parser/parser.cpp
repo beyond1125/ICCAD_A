@@ -312,6 +312,16 @@ int main(int argc, char** argv) {
         if (ok) std::cout << "Renamed " << args["--old"] << " to " << args["--new"] << "." << std::endl;
         else std::cout << "Failure: node '" << args["--old"]
                        << "' not found or new name already in use." << std::endl;
+    } else if (action == "decompose") {
+        int n = g.decompose_in_cone(args["--root"], args["--gate"], args["--basis"]);
+        if (n < 0) {
+            std::cout << "Failure: unsupported decomposition (gate '" << args["--gate"]
+                      << "' to basis '" << args["--basis"] << "')." << std::endl;
+        } else {
+            if (args.count("--out")) g.write_verilog(args["--out"]);
+            std::cout << "Replaced " << n << " " << args["--gate"] << " gate(s) in the cone of "
+                      << args["--root"] << " with " << args["--basis"] << " logic." << std::endl;
+        }
     } else if (action == "sweep") {
         int removed = g.sweep_dangling();
         if (args.count("--out")) g.write_verilog(args["--out"]);

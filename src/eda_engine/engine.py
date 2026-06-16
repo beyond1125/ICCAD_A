@@ -284,6 +284,27 @@ class EDAEngine:
             f"{change} Design updated; verify with check_equivalence.{rebuf}"
         )
 
+    def decompose_gates_in_cone(self, cone_root: str, gate_type: str,
+                                target_basis: str) -> str:
+        """Replace gates of a type within a cone using only a target gate basis.
+
+        Currently supports replacing 2-input OR gates with NAND+NOT logic
+        (OR(a,b) = NAND(!a,!b)). Functionally equivalent. Handles requests like
+        'replace all 2-input OR gates in the cone of n11[0] with NAND and NOT only'.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        b = target_basis.lower()
+        basis = "nand_not" if ("nand" in b and "not" in b) else b.replace(" ", "_").replace("+", "_")
+        work = self._session_path("decomposed")
+        res = self._run_action(
+            "decompose", root=cone_root, gate=gate_type.lower().strip(),
+            basis=basis, out=work,
+        )
+        if res.startswith("Replaced") and os.path.isfile(work):
+            self._loaded_filepath = work
+        return res
+
     def rename_node(self, old_name: str, new_name: str) -> str:
         """Rename a gate instance, wire, or signal and update all references.
 

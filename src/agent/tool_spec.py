@@ -360,6 +360,38 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "decompose_gates_in_cone",
+            "description": (
+                "Replace all gates of a given type within the fanin cone of a node "
+                "with equivalent logic built only from a target gate basis, preserving "
+                "functionality. Currently supports replacing 2-input OR gates with "
+                "NAND and NOT gates. Call this for requests like 'replace all 2-input "
+                "OR gates in the cone of n11[0] with equivalent logic built only from "
+                "NAND and NOT gates'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cone_root": {
+                        "type": "string",
+                        "description": "Node whose fanin cone is processed (e.g. 'n11[0]').",
+                    },
+                    "gate_type": {
+                        "type": "string",
+                        "description": "Gate type to replace, e.g. 'OR'.",
+                    },
+                    "target_basis": {
+                        "type": "string",
+                        "description": "Allowed basis for the replacement, e.g. 'NAND_NOT'.",
+                    },
+                },
+                "required": ["cone_root", "gate_type", "target_basis"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "check_equivalence",
             "description": (
                 "Formally verify that the current (possibly transformed) design is "
