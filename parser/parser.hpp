@@ -88,7 +88,30 @@ public:
         }
         
         if (nodes.find(start) == nodes.end()) return -1;
-        return get_max_depth_recursive(nodes[start], nodes[end], memo);
+        int d = get_max_depth_recursive(nodes[start], nodes[end], memo);
+        return (d < 0) ? -1 : d;
+    }
+
+    std::string get_critical_path(const std::string& start, const std::string& end) {
+        if (nodes.find(start) == nodes.end() || nodes.find(end) == nodes.end()) 
+            return "Error: Start or end node not found.";
+        
+        std::unordered_map<Node*, int> memo;
+        std::unordered_map<Node*, Node*> next_node_map;
+        
+        int depth = get_max_depth_with_path(nodes[start], nodes[end], memo, next_node_map);
+        if (depth < 0) return "No path found.";
+
+        std::stringstream ss;
+        ss << "Critical Path Depth: " << depth << " gate levels\nNodes: ";
+        Node* curr = nodes[start];
+        while (curr) {
+            ss << curr->name;
+            if (curr == nodes[end]) break;
+            ss << " -> ";
+            curr = next_node_map[curr];
+        }
+        return ss.str();
     }
 
     int get_node_depth_backward(Node* curr, std::unordered_map<Node*, int>& memo) {
@@ -148,6 +171,41 @@ public:
         if (nodes.find(name) == nodes.end()) return 0;
         std::unordered_set<Node*> visited;
         return count_fanin_gates_recursive(nodes[name], visited);
+    }
+
+    int count_fanout_gates(const std::string& name) {
+        if (nodes.find(name) == nodes.end()) return 0;
+        std::unordered_set<Node*> visited;
+        // Don't count the start node itself if it's a gate
+        int total = count_fanout_gates_recursive(nodes[name], visited);
+        if (nodes[name]->type == NodeType::GATE) total--;
+        return total;
+    }
+
+    std::string get_fanin_cone(const std::string& name) {
+        if (nodes.find(name) == nodes.end()) return "Error: Node not found.";
+        std::unordered_set<Node*> visited;
+        get_cone_recursive(nodes[name], visited, true);
+        std::stringstream ss;
+        ss << "Transitive Fanin Cone of " << name << " contains " << visited.size() << " nodes:\n";
+        for (auto n : visited) ss << n->name << " ";
+        return ss.str();
+    }
+
+    std::string get_fanout_cone(const std::string& name) {
+        if (nodes.find(name) == nodes.end()) return "Error: Node not found.";
+        std::unordered_set<Node*> visited;
+        get_cone_recursive(nodes[name], visited, false);
+        std::stringstream ss;
+        ss << "Transitive Fanout Cone of " << name << " contains " << visited.size() << " nodes:\n";
+        for (auto n : visited) ss << n->name << " ";
+        return ss.str();
+    }
+
+    int get_fanin_depth(const std::string& name) {
+        if (nodes.find(name) == nodes.end()) return -1;
+        std::unordered_map<Node*, int> memo;
+        return get_node_depth_backward(nodes[name], memo);
     }
 
     std::string get_node_info(const std::string& name) {
@@ -435,6 +493,24 @@ private:
         return memo[curr] = max_d;
     }
 
+    int get_max_depth_with_path(Node* curr, Node* target, std::unordered_map<Node*, int>& memo, std::unordered_map<Node*, Node*>& next_node_map) {
+        if (curr == target) return 0;
+        if (memo.count(curr)) return memo[curr];
+
+        int max_d = -1e9;
+        Node* best_next = nullptr;
+        for (auto next : curr->outputs) {
+            int d = get_max_depth_with_path(next, target, memo, next_node_map);
+            if (next->type == NodeType::GATE) d += 1;
+            if (d > max_d) {
+                max_d = d;
+                best_next = next;
+            }
+        }
+        next_node_map[curr] = best_next;
+        return memo[curr] = max_d;
+    }
+
     int count_paths_recursive(Node* curr, Node* target, Node* avoid, std::unordered_map<Node*, int>& memo) {
         if (curr == target) return 1;
         if (curr == avoid) return 0;
@@ -469,6 +545,26 @@ private:
             count += count_fanin_gates_recursive(in, visited);
         }
         return count;
+    }
+
+    int count_fanout_gates_recursive(Node* curr, std::unordered_set<Node*>& visited) {
+        if (!curr || visited.count(curr)) return 0;
+        visited.insert(curr);
+
+        int count = (curr->type == NodeType::GATE) ? 1 : 0;
+        for (auto out : curr->outputs) {
+            count += count_fanout_gates_recursive(out, visited);
+        }
+        return count;
+    }
+
+    void get_cone_recursive(Node* curr, std::unordered_set<Node*>& visited, bool backward) {
+        if (!curr || visited.count(curr)) return;
+        visited.insert(curr);
+        const auto& next_nodes = backward ? curr->inputs : curr->outputs;
+        for (auto next : next_nodes) {
+            get_cone_recursive(next, visited, backward);
+        }
     }
 
     std::string gate_type_to_string(GateType gt) {

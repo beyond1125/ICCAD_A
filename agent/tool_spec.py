@@ -56,12 +56,36 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "analyze_critical_path",
+            "description": (
+                "Identify the critical path (the longest combinational path in terms of "
+                "gate levels) between a specific start_node and end_node. Returns the "
+                "maximum gate-level depth and the specific sequence of nodes along the path."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start_node": {
+                        "type": "string",
+                        "description": "Source signal name or primary input.",
+                    },
+                    "end_node": {
+                        "type": "string",
+                        "description": "Sink signal name or primary output.",
+                    },
+                },
+                "required": ["start_node", "end_node"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "analyze_depth",
             "description": (
                 "Compute the maximum combinational logic depth (critical-path length in "
-                "gate levels) to end_node. If start_node is provided, compute depth "
-                "from start_node to end_node. If omitted, compute the maximum depth "
-                "from any primary input to end_node."
+                "gate levels) to end_node. Use this for general depth queries where the "
+                "full path of nodes is not required."
             ),
             "parameters": {
                 "type": "object",
@@ -112,8 +136,88 @@ EDA_TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "count_fanin_gates",
             "description": (
-                "Count the number of gate instances in the transitive fanin cone "
-                "of a specific node (signal or gate)."
+                "Count the total number of gate instances in the transitive fanin cone "
+                "(all gates that drive this node, directly or indirectly)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The target signal or gate name.",
+                    }
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "count_fanout_gates",
+            "description": (
+                "Count the total number of gate instances in the transitive fanout cone "
+                "(all gates driven by this node, directly or indirectly)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The target signal or gate name.",
+                    }
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_fanin_cone",
+            "description": (
+                "Retrieve the complete list of nodes (signals and gates) in the "
+                "transitive fanin cone of a specific node."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The target signal or gate name.",
+                    }
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_fanout_cone",
+            "description": (
+                "Retrieve the complete list of nodes (signals and gates) in the "
+                "transitive fanout cone of a specific node."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The target signal or gate name.",
+                    }
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_fanin_depth",
+            "description": (
+                "Compute the maximum combinational logic depth within the "
+                "transitive fanin cone of a specific primary output or signal."
             ),
             "parameters": {
                 "type": "object",
