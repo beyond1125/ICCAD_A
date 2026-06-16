@@ -63,6 +63,18 @@ class Planner:
         """Clear EDA engine state for a new testcase."""
         self._engine.reset()
 
+    def _build_system_prompt(self) -> str:
+        """Include live EDA engine state so follow-up requests see loaded designs."""
+        if self._engine.is_design_loaded:
+            state = (
+                f"A design is already loaded from '{self._engine.loaded_filepath}'. "
+                "Do not reload unless the user asks for a different file; "
+                "use analysis and write tools on the current design."
+            )
+        else:
+            state = "No design is currently loaded."
+        return f"{_SYSTEM_PROMPT}\n\nCurrent session state: {state}"
+
     def process(self, user_request: str) -> str:
         """Process one natural-language request and return the response text.
 
@@ -73,7 +85,7 @@ class Planner:
             A plain-text response suitable for wrapping in #RESPONSE/#END tags.
         """
         messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": self._build_system_prompt()},
             {"role": "user",   "content": user_request},
         ]
 

@@ -4,6 +4,7 @@
 # runtime artefacts
 *.log
 *_out.v
+parser/parser_cpp
 parser/parser_cpp.exe
 __pycache__/
 *.pyc
@@ -14,6 +15,9 @@ __pycache__/
 # editor
 .vscode/
 .idea/
+
+# deprecated local notes (do not commit)
+agent_handoff_v3.md
 
 tools/abc
 venv
