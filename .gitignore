@@ -4,6 +4,7 @@
 # runtime artefacts
 *.log
 *_out.v
+verification_runs/
 parser/parser_cpp
 parser/parser_cpp.exe
 src/eda_engine/parser/parser_cpp

@@ -4,9 +4,9 @@
 
 | 項目       | 內容             |
 | -------- | -------------- |
-| **版本**   | v0.2           |
+| **版本**   | v0.3           |
 | **建立日期** | 2026-06-10     |
-| **最後更新** | 2026-06-10     |
+| **最後更新** | 2026-06-16     |
 | **撰寫者**  | CryingAtDesk   |
 | **狀態**   | 草稿           |
 
@@ -16,13 +16,15 @@
 | ---- | ---------- | ---- | ------ |
 | v0.1 | 2026-06-10 | Riko | 初版建立   |
 | v0.2 | 2026-06-10 | —    | 補充目錄結構、I/O 協議、已實作 Tool；對齊 log 路徑與系統名稱 |
+| v0.3 | 2026-06-16 | —    | 15 tools、ABC CEC、verify 腳本；四分支合併至 main；§8.2 測資 verify |
 
 ### 相關文件
 
 | 文件 | 用途 |
 |------|------|
-| [TSD.md](./TSD.md) | 未實作功能的技術細節（API、演算法） |
+| [TSD.md](./TSD.md) | 技術細節（API、演算法） |
 | [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) | SDD 規劃 vs 程式現況追蹤 |
+| [VERIFICATION.md](./VERIFICATION.md) | 測資 verify、log 位置、merge 比對 |
 
 ---
 
@@ -97,7 +99,7 @@
                     └────────────────────────┘
 ```
 
-> **目前實作階段**：前級 Agent 與 Graph Engine 基礎能力已可運作；Transformation 僅部分實作；Formal Verification 尚未接入。詳見 [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md)。
+> **目前實作階段**：Agent、Graph 分析、buffer insertion、ABC flop-cut CEC 已可運作；多數 transform 與進階分析仍待實作。詳見 [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) 與 [VERIFICATION.md](./VERIFICATION.md)。
 
 ### 3.2 目前實作架構（As-Built）
 
@@ -154,8 +156,8 @@ M-001 (Agent核心) ─── 呼叫 ───> M-002 (Prompt管理) ───> 
 | M-002 | `src/agent/planner.py` (`_SYSTEM_PROMPT`) | System prompt 與 EDA 行為約束 |
 | M-003 | `src/eda_engine/engine.py` | Python → C++ subprocess 橋接 |
 | M-003 | `src/eda_engine/parser/` | C++ Verilog 解析、Graph、分析演算法 |
-| M-004 | `src/eda_engine/parser/`（`replace_gate`） | 目前僅 gate type 替換 |
-| M-005 | — | 尚未實作 |
+| M-004 | `src/eda_engine/parser/`（`insert_buffers`, `replace_gate`） | buffer fanout-limit；gate type 替換 |
+| M-005 | `src/eda_engine/engine.py`（`check_equivalence`）+ ABC | flop-cut combinational CEC；無 counterexample 回饋 |
 
 ---
 
@@ -173,9 +175,13 @@ ICCAD_A/
 │   ├── unit_tests/            # 元件測試
 │   └── integration_tests/     # 模擬 main loop 的整合測試
 ├── testcase/                  # 官方測資（保持根目錄，方便掛載）
-├── docs/                      # SDD, TSD, IMPLEMENTATION_STATUS
+├── docs/                      # SDD, TSD, IMPLEMENTATION_STATUS, VERIFICATION
 ├── scripts/
-│   └── build_parser.py        # 跨平台編譯 C++ parser
+│   ├── build_parser.py        # 跨平台編譯 C++ parser
+│   ├── verify_testcases.py    # 批次測資 step 級驗證（見 docs/VERIFICATION.md）
+│   ├── verify_lib.py          # 驗證共用邏輯
+│   └── merge_and_verify.sh    # merge 前後自動 verify
+├── verification_runs/         # verify 產物（gitignore，每次 run 一資料夾）
 ├── tools/abc/                 # 外部 ABC 工具（選用，需自行 clone）
 ├── config.yaml                # LLM 執行設定
 ├── docker-compose.yml         # 容器化開發環境
@@ -254,18 +260,28 @@ API 金鑰建議放在根目錄 `.env`（已被 gitignore）。
 
 ## 7. 已暴露 Tool 清單（Phase 1）
 
-以下 Tool 已定義於 `src/agent/tool_spec.py`，由 Planner dispatch 至 `EDAEngine` → C++ parser。
+以下 Tool 已定義於 `src/agent/tool_spec.py`，由 Planner dispatch 至 `EDAEngine` → C++ parser（或 ABC）。
 
-| Tool | 說明 | C++ action |
-|------|------|------------|
-| `load_design` | 載入 Verilog 網表 | `load` |
-| `write_design` | 寫出目前 netlist | `write` |
-| `analyze_depth` | 兩節點間最大組合深度 | `calc_depth` |
-| `find_paths` | 兩節點間路徑數（可避開某 node） | `count_paths` |
-| `get_node_info` | 查詢 signal/gate 結構 | `get_info` |
-| `list_nodes` | 列出所有節點 | `list_nodes` |
-| `count_gates` | 依 gate type 計數 | `count_gates` |
-| `replace_gate` | 替換指定 gate 的 type | `replace_gate` |
+| Tool | 說明 | 後端 |
+|------|------|------|
+| `load_design` | 載入 Verilog 網表 | C++ `load` |
+| `write_design` | 寫出目前 netlist | C++ `write` |
+| `analyze_depth` | 兩節點間最大組合深度 | C++ `calc_depth` |
+| `analyze_critical_path` | 關鍵路徑深度與節點 | C++ `get_critical_path` |
+| `find_paths` | 路徑存在 / 枚舉（可 avoid node） | C++ `list_paths` |
+| `count_fanin_gates` | fanin cone gate 數 | C++ `count_fanin` |
+| `count_fanout_gates` | fanout cone gate 數 | C++ `count_fanout` |
+| `get_fanin_cone` | fanin cone 節點列表 | C++ `get_fanin_cone` |
+| `get_fanout_cone` | fanout cone 節點列表 | C++ `get_fanout_cone` |
+| `get_fanin_depth` | fanin cone 內最大深度 | C++ `get_fanin_depth` |
+| `get_node_info` | 查詢 signal/gate 結構 | C++ `get_info` |
+| `list_nodes` | 列出所有節點 | C++ `list_nodes` |
+| `count_gates` | 依 gate type 計數 | C++ `count_gates` |
+| `insert_buffers` | fanout ≤ N 插入 BUF | C++ `insert_buffers` |
+| `check_equivalence` | 與原始 netlist 功能等價 | C++ `write_blif` + ABC `cec` |
+| `replace_gate` | 替換指定 gate 的 type | C++ `replace_gate` |
+
+完整缺口與驗證基線見 [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md)。
 
 ---
 
@@ -284,7 +300,13 @@ python scripts/build_parser.py
 | 測試 | 路徑 | 說明 |
 |------|------|------|
 | 整合測試 | `tests/integration_tests/run_test.py` | 模擬 stdin loop（Deterministic LLM stub） |
-| 元件測試 | `tests/unit_tests/verify_integration.py` | 直接呼叫 EDAEngine |
+| 元件測試 | `tests/unit_tests/verify_integration.py` | 直接呼叫 EDAEngine（煙霧） |
+| **測資驗證** | `scripts/verify_testcases.py` | 批次 official prompt.txt；step 級；ABC。見 [VERIFICATION.md](./VERIFICATION.md) |
+
+```bash
+python3 scripts/verify_testcases.py --tier smoke -v    # 預設，merge 後快速檢查
+python3 scripts/verify_testcases.py --tier basic -v
+```
 
 ### 8.3 CI
 
@@ -301,9 +323,10 @@ GitHub Actions：`.github/workflows/ci.yml`
 
 ## 9. 目標能力與實作差距
 
-SDD §4 中 M-004（完整 transform）、M-005（形式驗證）、M-003 進階分析（clock domain、logic cone、完整 path 枚舉）等 **尚未完成**。
+SDD §4 中 M-004 多數 transform（remap、depth opt、dangling 移除等）、M-003 進階分析（clock domain、內部信號等價、完整 path 枚舉）等 **尚未完成**。
 
 請參考：
 
 - [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) — 模組 / Tool / 約束的完成度追蹤
-- [TSD.md](./TSD.md) — 待實作功能的技術規格（開發前撰寫）
+- [TSD.md](./TSD.md) — 已實作與待實作功能的技術規格
+- [VERIFICATION.md](./VERIFICATION.md) — 測資 verify 與 merge 比對

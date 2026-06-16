@@ -33,7 +33,9 @@ ICCAD_A/
 ├── testcase/                  # 官方測試案例（保持在外層方便掛載/讀取）
 ├── docs/                      # 系統架構與開發文件
 ├── scripts/                   # 開發輔助腳本
-│   └── build_parser.py        # 跨平台編譯 C++ parser
+│   ├── build_parser.py        # 跨平台編譯 C++ parser
+│   ├── verify_testcases.py    # 批次測資 step 級驗證
+│   └── merge_and_verify.sh    # merge 前後自動 verify
 │
 ├── tools/abc/                 # abc 工具（需自行 clone）
 │
@@ -84,7 +86,12 @@ python main.py -config config.yaml
 ```bash
 python tests/integration_tests/run_test.py
 python tests/unit_tests/verify_integration.py
+
+# 批次 official 測資（step 級，預設 smoke = test01–02）
+python3 scripts/verify_testcases.py -v
 ```
+
+詳見 [docs/VERIFICATION.md](./docs/VERIFICATION.md)。
 
 ## Log 檔案位置
 
@@ -93,6 +100,7 @@ python tests/unit_tests/verify_integration.py
 | 對話 log | `testcase/<case_name>/<case_name>.log` |
 | Parser 錯誤 | `parser_error.log`（專案根目錄） |
 | 輸出 netlist | `testcase/<case_name>/<case_name>_out.v` |
+| **Verify 產物** | `verification_runs/<timestamp>_<label>/`（見 ISSUES.md） |
 
 ## 跨平台協作
 
@@ -108,8 +116,9 @@ python tests/unit_tests/verify_integration.py
 詳見 [`docs/`](./docs/) 目錄：
 
 - [SDD.md](./docs/SDD.md) — 系統設計
-- [TSD.md](./docs/TSD.md) — 技術規格（未實作功能）
+- [TSD.md](./docs/TSD.md) — 技術規格
 - [IMPLEMENTATION_STATUS.md](./docs/IMPLEMENTATION_STATUS.md) — 實作進度追蹤
+- [VERIFICATION.md](./docs/VERIFICATION.md) — 測資驗證與 merge 比對
 
 ## 錯誤排查
 
