@@ -305,6 +305,26 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "reduce_depth",
+            "description": (
+                "Reduce the critical-path / maximum logic depth of the design by "
+                "restructuring the combinational logic with Berkeley ABC "
+                "(balance/resyn2), preserving functionality. Call this for requests "
+                "like 'reduce the critical path depth through restructuring', "
+                "'minimize maximum path depth', or 'optimize the logic depth'. The "
+                "restructured netlist becomes the current design; verify with "
+                "check_equivalence afterwards."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "check_equivalence",
             "description": (
                 "Formally verify that the current (possibly transformed) design is "

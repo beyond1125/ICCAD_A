@@ -244,6 +244,137 @@ public:
     // the combinational logic (incl. every flop's next-state function) is identical
     // — exactly sound for transforms that preserve the flop boundary (e.g. buffer
     // insertion). Names are kept stable across designs so `cec` matches by name.
+    // Read a (flop-cut) logic BLIF produced by ABC and build the corresponding
+    // combinational gates into this graph. Each .names node is a complete k-input
+    // (k<=2) function; we compute its truth table and emit the matching primitive,
+    // inserting shared inverters for the four "mixed-polarity" AND/OR cases.
+    // PI/PO nodes are expected to be pre-created (their types are preserved); every
+    // other referenced net becomes a SIGNAL. Used by the depth-reduction round-trip.
+    void load_logic_blif(const std::string& file) {
+        std::ifstream ifs(file);
+        if (!ifs.is_open()) return;
+
+        int ctr = 0;
+        std::unordered_map<Node*, Node*> inv_cache;
+        Node* first_pi = nullptr;
+        for (Node* n : all_nodes)
+            if (n->type == NodeType::PRIMARY_INPUT) { first_pi = n; break; }
+
+        auto mkgate = [&](GateType gt, std::vector<Node*> ins, const std::string& outnm) {
+            Node* g = get_or_create_node("__bg" + std::to_string(ctr++), NodeType::GATE);
+            g->gate_type = gt;
+            Node* o = get_or_create_node(outnm);
+            add_edge(g, o);
+            for (Node* x : ins) add_edge(x, g);
+        };
+        auto inv = [&](Node* x) -> Node* {
+            auto it = inv_cache.find(x);
+            if (it != inv_cache.end()) return it->second;
+            Node* g = get_or_create_node("__bg" + std::to_string(ctr++), NodeType::GATE);
+            g->gate_type = GateType::NOT;
+            Node* o = get_or_create_node("__bn" + std::to_string(ctr++));
+            add_edge(x, g); add_edge(g, o);
+            inv_cache[x] = o;
+            return o;
+        };
+        // const0 = AND(p, !p), const1 = OR(p, !p), synthesised from any PI.
+        auto drive_const = [&](int val, const std::string& outnm) {
+            if (first_pi) mkgate(val ? GateType::OR : GateType::AND, {first_pi, inv(first_pi)}, outnm);
+        };
+
+        std::vector<std::string> toks;          // current .names: inputs..., output
+        std::vector<std::string> rows;          // cover rows
+        auto flush = [&]() {
+            if (toks.empty()) return;
+            std::string outnm = toks.back();
+            int nin = (int)toks.size() - 1;
+            int N = 1 << nin;
+            int rowval = rows.empty() ? 1 : (rows[0].back() == '1' ? 1 : 0);
+            std::vector<int> tt(N, rows.empty() ? 0 : (1 - rowval));
+            for (const std::string& r : rows) {
+                std::string pat; std::string ov;
+                std::istringstream rs(r); rs >> pat >> ov;
+                int v = (!ov.empty() && ov[0] == '1') ? 1 : (nin == 0 ? (pat == "1") : 0);
+                if (nin == 0) { tt[0] = (pat == "1") ? 1 : v; continue; }
+                for (int m = 0; m < N; ++m) {
+                    bool match = true;
+                    for (int b = 0; b < nin; ++b) {
+                        if (b >= (int)pat.size()) { match = false; break; }
+                        if (pat[b] == '-') continue;
+                        if ((pat[b] == '1') != (((m >> b) & 1) == 1)) { match = false; break; }
+                    }
+                    if (match) tt[m] = v;
+                }
+            }
+            int mask = 0;
+            for (int m = 0; m < N; ++m) if (tt[m]) mask |= (1 << m);
+
+            if (nin == 0) {
+                drive_const(mask & 1, outnm);
+            } else if (nin == 1) {
+                Node* a = get_or_create_node(toks[0]);
+                switch (mask) {              // bit0: a=0, bit1: a=1
+                    case 0: drive_const(0, outnm); break;
+                    case 1: mkgate(GateType::NOT, {a}, outnm); break;
+                    case 2: mkgate(GateType::BUF, {a}, outnm); break;
+                    default: drive_const(1, outnm); break;
+                }
+            } else {                          // nin == 2; index = a + 2*b
+                Node* a = get_or_create_node(toks[0]);
+                Node* b = get_or_create_node(toks[1]);
+                switch (mask) {
+                    case 0x0: drive_const(0, outnm); break;
+                    case 0x1: mkgate(GateType::NOR,  {a, b}, outnm); break;
+                    case 0x2: mkgate(GateType::AND,  {a, inv(b)}, outnm); break;
+                    case 0x3: mkgate(GateType::NOT,  {b}, outnm); break;
+                    case 0x4: mkgate(GateType::AND,  {inv(a), b}, outnm); break;
+                    case 0x5: mkgate(GateType::NOT,  {a}, outnm); break;
+                    case 0x6: mkgate(GateType::XOR,  {a, b}, outnm); break;
+                    case 0x7: mkgate(GateType::NAND, {a, b}, outnm); break;
+                    case 0x8: mkgate(GateType::AND,  {a, b}, outnm); break;
+                    case 0x9: mkgate(GateType::XNOR, {a, b}, outnm); break;
+                    case 0xA: mkgate(GateType::BUF,  {a}, outnm); break;
+                    case 0xB: mkgate(GateType::OR,   {a, inv(b)}, outnm); break;
+                    case 0xC: mkgate(GateType::BUF,  {b}, outnm); break;
+                    case 0xD: mkgate(GateType::OR,   {inv(a), b}, outnm); break;
+                    case 0xE: mkgate(GateType::OR,   {a, b}, outnm); break;
+                    default:  drive_const(1, outnm); break;
+                }
+            }
+            toks.clear(); rows.clear();
+        };
+
+        std::string line;
+        while (std::getline(ifs, line)) {
+            if (!line.empty() && line.back() == '\\') {   // BLIF line continuation
+                line.pop_back();
+                std::string cont;
+                while (std::getline(ifs, cont)) {
+                    bool more = !cont.empty() && cont.back() == '\\';
+                    if (more) cont.pop_back();
+                    line += cont;
+                    if (!more) break;
+                }
+            }
+            size_t s = line.find_first_not_of(" \t");
+            if (s == std::string::npos) continue;
+            if (line[s] == '#') continue;
+            if (line[s] == '.') {
+                flush();
+                if (line.compare(s, 6, ".names") == 0) {
+                    std::istringstream ss(line.substr(s));
+                    std::string kw, t; ss >> kw;
+                    while (ss >> t) toks.push_back(t);
+                }
+                // .model/.inputs/.outputs/.end are ignored: types come from the
+                // pre-created PI/PO nodes; other nets are created on demand.
+            } else {
+                rows.push_back(line.substr(s));
+            }
+        }
+        flush();
+    }
+
     void write_blif(const std::string& filename) {
         std::ofstream ofs(filename);
         bool need_c0 = false, need_c1 = false;
@@ -303,10 +434,13 @@ public:
                 default: break;
             }
         }
-        // Tap each DFF's D net out as a per-instance primary output.
+        // Tap each DFF's D net out as a per-instance primary output. If the D net is
+        // already named __D_<inst> (e.g. a netlist rebuilt from a flop-cut BLIF), it
+        // is its own output — emitting a buffer would redefine the net.
         for (Node* d : dffs) {
             std::string dn = d->inputs.empty() ? "__const0" : sig(d->inputs[0]->name);
-            ofs << ".names " << dn << " __D_" << d->name << "\n1 1\n";
+            std::string tap = "__D_" + d->name;
+            if (dn != tap) ofs << ".names " << dn << " " << tap << "\n1 1\n";
         }
         if (need_c0) ofs << ".names __const0\n";
         if (need_c1) ofs << ".names __const1\n1\n";

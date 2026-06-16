@@ -15,6 +15,7 @@ Supported operations (mirrors tool_spec.py):
 
 import subprocess
 import os
+import re
 import sys
 import tempfile
 from typing import Any, Dict, Optional, List
@@ -209,6 +210,65 @@ class EDAEngine:
         if "Inserted" in res and os.path.isfile(work):
             self._loaded_filepath = work
         return res
+
+    def reduce_depth(self) -> str:
+        """Reduce critical-path depth by restructuring the combinational logic.
+
+        Exports the flop-cut logic to BLIF, optimizes depth in ABC
+        (strash/balance/resyn2), then rebuilds the gate-level netlist with the
+        flip-flops reattached. Functionally equivalent (verify with
+        check_equivalence). The optimized netlist becomes the active design.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        if not os.path.isfile(self._abc_path):
+            return f"Error: ABC binary not found at {self._abc_path}. Build it or set ABC_BIN."
+
+        cut = self._session_path("cut", "blif")
+        opt = self._session_path("opt", "blif")
+        work = self._session_path("depthopt")
+
+        e1 = self._run_parser_on(self._loaded_filepath, "write_blif", out=cut)
+        if "Error" in e1 or not os.path.isfile(cut):
+            return f"Error exporting BLIF for depth optimization: {e1}"
+
+        # resyn2 expanded to built-ins so we do not depend on abc.rc aliases
+        # (aliases are not available under the scripted '-q' invocation).
+        resyn2 = (
+            "balance; rewrite; refactor; balance; rewrite; rewrite -z; "
+            "balance; refactor -z; rewrite -z; balance"
+        )
+        script = (
+            f"read_blif {cut}; strash; print_stats; "
+            f"balance; {resyn2}; balance; print_stats; write_blif {opt}"
+        )
+        try:
+            r = subprocess.run(
+                [self._abc_path, "-q", script],
+                capture_output=True, text=True, timeout=600,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return f"Error running ABC depth optimization: {exc}"
+        if not os.path.isfile(opt):
+            return f"Error: ABC produced no optimized netlist. {(r.stdout + r.stderr)[:300]}"
+
+        levels = re.findall(r"lev\s*=\s*(\d+)", r.stdout)
+        e2 = self._run_parser_on(self._loaded_filepath, "rebuild", blif=opt, out=work)
+        if "Success" not in e2 or not os.path.isfile(work):
+            return f"Error rebuilding netlist after optimization: {e2}"
+
+        self._loaded_filepath = work
+        if len(levels) >= 2 and levels[0] != levels[-1]:
+            change = (
+                f"Combinational logic depth reduced from {levels[0]} to {levels[-1]} "
+                f"levels (AIG)."
+            )
+        else:
+            change = "Logic restructured for depth."
+        return (
+            f"Reduced critical path depth via ABC restructuring (balance/resyn2). "
+            f"{change} Design updated; verify with check_equivalence."
+        )
 
     def check_equivalence(self, reference: Optional[str] = None) -> str:
         """Formally verify the current design against a reference netlist with ABC.

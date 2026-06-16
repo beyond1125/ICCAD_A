@@ -313,6 +313,35 @@ int main(int argc, char** argv) {
         } else {
             log_error("Error: --out required for write_blif action");
         }
+    } else if (action == "rebuild") {
+        // Reconstruct a full sequential netlist: combinational logic comes from an
+        // ABC-optimized flop-cut BLIF (--blif); flip-flops (with their CK/RN/SN
+        // pins) are reattached from the original netlist parsed into g (--in).
+        if (!args.count("--blif") || !args.count("--out")) {
+            log_error("Error: rebuild requires --blif and --out");
+            return 1;
+        }
+        Graph R;
+        R.module_name = g.module_name;
+        // Carry over primary input/output declarations (types and bit names).
+        for (Node* n : g.all_nodes) {
+            if (n->type == NodeType::PRIMARY_INPUT) R.get_or_create_node(n->name, NodeType::PRIMARY_INPUT);
+            else if (n->type == NodeType::PRIMARY_OUTPUT) R.get_or_create_node(n->name, NodeType::PRIMARY_OUTPUT);
+        }
+        R.load_logic_blif(args["--blif"]);
+        // Reattach each DFF: Q drives its original net, D is fed by __D_<inst>,
+        // and CK/RN/SN are preserved verbatim via the original pin_conns.
+        for (Node* n : g.all_nodes) {
+            if (n->type == NodeType::GATE && n->gate_type == GateType::DFF) {
+                Node* d = R.get_or_create_node(n->name, NodeType::GATE);
+                d->gate_type = GateType::DFF;
+                d->pin_conns = n->pin_conns;
+                if (!n->outputs.empty()) R.add_edge(d, R.get_or_create_node(n->outputs[0]->name));
+                R.add_edge(R.get_or_create_node("__D_" + n->name), d);
+            }
+        }
+        R.write_verilog(args["--out"]);
+        std::cout << "Success" << std::endl;
     } else if (action == "write") {
         if (args.count("--out")) {
             g.write_verilog(args["--out"]);
