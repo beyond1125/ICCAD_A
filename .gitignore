@@ -20,4 +20,5 @@ __pycache__/
 agent_handoff_v3.md
 
 tools/abc
+/abc/
 venv

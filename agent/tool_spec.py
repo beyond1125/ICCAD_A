@@ -178,6 +178,29 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "insert_buffers",
+            "description": (
+                "Insert buffer (BUF) gates so that no gate drives more than a given number "
+                "of loads (fanout limit), building a balanced buffer tree where needed. "
+                "Functionally equivalent to the original. Call this for requests like "
+                "'insert buffers so no gate drives more than 4 loads' or 'fanout optimization "
+                "with maximum fanout 4'. The transformed netlist becomes the current design."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "max_fanout": {
+                        "type": "integer",
+                        "description": "Maximum number of loads any single gate may drive (e.g. 4).",
+                    }
+                },
+                "required": ["max_fanout"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "replace_gate",
             "description": (
                 "Replace the type of a specific gate instance in the netlist. "

@@ -59,6 +59,7 @@ class Planner:
             "replace_gate":  engine.replace_gate,
             "count_gates":   engine.count_gates,
             "count_fanin_gates": engine.count_fanin_gates,
+            "insert_buffers": engine.insert_buffers,
         }
 
     # ------------------------------------------------------------------ public

@@ -16,6 +16,7 @@ Supported operations (mirrors tool_spec.py):
 import subprocess
 import os
 import sys
+import tempfile
 from typing import Any, Dict, Optional, List
 
 
@@ -46,7 +47,17 @@ class EDAEngine:
 
     def __init__(self) -> None:
         self._loaded_filepath: Optional[str] = None
+        # The as-loaded netlist, preserved across transforms for equivalence checking.
+        self._original_filepath: Optional[str] = None
         self._parser_path = _find_parser_binary()
+        # Transforms mutate then write to a session file; _loaded_filepath is chained
+        # to it so later actions (and write_design) see the transformed netlist.
+        self._session_dir = tempfile.mkdtemp(prefix="eda_sess_")
+        self._xform_seq = 0
+
+    def _session_path(self, tag: str) -> str:
+        self._xform_seq += 1
+        return os.path.join(self._session_dir, f"{tag}_{self._xform_seq}.v")
 
     def _run_action(self, action: str, **kwargs) -> str:
         """Helper to run a command on the C++ parser."""
@@ -83,6 +94,7 @@ class EDAEngine:
         res = self._run_action("load", filepath=filepath)
         if "Success" in res:
             self._loaded_filepath = filepath
+            self._original_filepath = filepath
         return res
 
     def list_nodes(self) -> str:
@@ -128,9 +140,22 @@ class EDAEngine:
             kwargs["out"] = out_file
         return self._run_action("replace_gate", **kwargs)
 
+    def insert_buffers(self, max_fanout: int = 4) -> str:
+        """Insert buffers so no gate drives more than *max_fanout* loads.
+
+        Functionally transparent. The transformed netlist becomes the active design,
+        so a subsequent write_design (or further transform) operates on it.
+        """
+        work = self._session_path("buffered")
+        res = self._run_action("insert_buffers", max_fanout=max_fanout, out=work)
+        if "Inserted" in res and os.path.isfile(work):
+            self._loaded_filepath = work
+        return res
+
     def reset(self) -> None:
         """Clear state."""
         self._loaded_filepath = None
+        self._original_filepath = None
 
     @property
     def is_design_loaded(self) -> bool:
@@ -139,3 +164,8 @@ class EDAEngine:
     @property
     def loaded_filepath(self) -> Optional[str]:
         return self._loaded_filepath
+
+    @property
+    def original_filepath(self) -> Optional[str]:
+        """Path to the as-loaded netlist (for equivalence checking against transforms)."""
+        return self._original_filepath

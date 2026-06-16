@@ -22,6 +22,17 @@ enum class GateType {
     NOT, AND, OR, XOR, NOR, NAND, XNOR, BUF, DFF, UNKNOWN
 };
 
+// One connection of a named-port instance, e.g. ".CK(n0)" or ".SN(1'b1)".
+// edge_dir records whether a graph edge was built for this pin so write_verilog
+// can refresh it from the (possibly transformed) graph instead of the stale name:
+//   0 = no edge (constants, DFF control pins), 1 = input edge, 2 = output edge.
+struct PinConn {
+    std::string pin;
+    std::string signal;
+    bool is_const;
+    int edge_dir;
+};
+
 class Node {
 public:
     std::string name;
@@ -29,6 +40,9 @@ public:
     GateType gate_type;
     std::vector<Node*> inputs;
     std::vector<Node*> outputs;
+    // Non-empty for instances written with named ports (e.g. DFFs). Preserves the
+    // original pin order, names, and constant connections for faithful round-trip.
+    std::vector<PinConn> pin_conns;
 
     Node(const std::string& n, NodeType t) : name(n), type(t), gate_type(GateType::UNKNOWN) {}
 };
@@ -158,12 +172,81 @@ public:
 
     bool replace_gate(const std::string& target, const std::string& new_type) {
         if (nodes.find(target) == nodes.end() || nodes[target]->type != NodeType::GATE) return false;
-        
+
         GateType gt = string_to_gate_type_static(new_type);
         if (gt == GateType::UNKNOWN) return false;
-        
+
         nodes[target]->gate_type = gt;
         return true;
+    }
+
+    // Insert BUF gates so that no gate drives more than max_fanout loads, building
+    // a balanced buffer tree for each over-driven net. Functionally transparent
+    // (BUF out = in). Only nets driven by a GATE are buffered; primary-input nets
+    // (e.g. clock/reset) are out of scope here. Returns the number of BUF gates added.
+    int insert_buffers(int max_fanout) {
+        if (max_fanout < 2) return 0;  // a tree needs branching factor >= 2
+        int buf_count = 0;
+        int name_ctr = 0;
+
+        auto fresh = [&](const std::string& prefix) {
+            std::string nm;
+            do { nm = prefix + std::to_string(name_ctr++); } while (nodes.count(nm));
+            return nm;
+        };
+
+        // Snapshot existing gates; buffers we add are already within the limit.
+        std::vector<Node*> gate_snapshot;
+        for (Node* n : all_nodes) if (n->type == NodeType::GATE) gate_snapshot.push_back(n);
+
+        // A sink is something needing a driver: either a consumer gate's input pin
+        // (is_buffer=false, identified by consumer+pin) or a buffer's single input
+        // (is_buffer=true).
+        struct Sink { Node* consumer; int pin; bool is_buffer; };
+
+        for (Node* g : gate_snapshot) {
+            if (g->outputs.empty()) continue;
+            Node* s = g->outputs[0];
+            if ((int)s->outputs.size() <= max_fanout) continue;
+
+            // Collect every load pin currently driven by s (handles a consumer that
+            // taps s on multiple input pins).
+            std::vector<Sink> pending;
+            std::unordered_map<Node*, bool> seen;
+            for (Node* c : s->outputs) {
+                if (seen[c]) continue;
+                seen[c] = true;
+                for (int i = 0; i < (int)c->inputs.size(); ++i)
+                    if (c->inputs[i] == s) pending.push_back({c, i, false});
+            }
+            s->outputs.clear();  // survivors are re-attached as the top tree level
+
+            auto assign = [&](const Sink& sk, Node* src) {
+                if (sk.is_buffer) sk.consumer->inputs.assign(1, src);
+                else sk.consumer->inputs[sk.pin] = src;
+                src->outputs.push_back(sk.consumer);
+            };
+
+            // Bottom-up: repeatedly group sinks into chunks of max_fanout behind a
+            // new buffer until the top level fits, then drive the top from s.
+            while ((int)pending.size() > max_fanout) {
+                std::vector<Sink> next;
+                for (size_t i = 0; i < pending.size(); i += max_fanout) {
+                    size_t end = std::min(i + (size_t)max_fanout, pending.size());
+                    if (end - i == 1) { next.push_back(pending[i]); continue; }
+                    Node* buf = get_or_create_node(fresh("buf_fo_"), NodeType::GATE);
+                    buf->gate_type = GateType::BUF;
+                    Node* w = get_or_create_node(fresh("nbuf_"), NodeType::SIGNAL);
+                    add_edge(buf, w);  // buffer drives its new net
+                    buf_count++;
+                    for (size_t j = i; j < end; ++j) assign(pending[j], w);
+                    next.push_back({buf, -1, true});
+                }
+                pending.swap(next);
+            }
+            for (auto& sk : pending) assign(sk, s);
+        }
+        return buf_count;
     }
 
     void write_verilog(const std::string& filename) {
@@ -224,8 +307,24 @@ public:
         for (auto n : all_nodes) {
             if (n->type == NodeType::GATE) {
                 ofs << "    " << gate_type_to_string(n->gate_type) << " " << n->name << " (";
-                if (!n->outputs.empty()) ofs << n->outputs[0]->name;
-                for (auto in : n->inputs) ofs << ", " << in->name;
+                if (!n->pin_conns.empty()) {
+                    // Named-port instance (e.g. DFF): preserve pin names/constants,
+                    // but refresh edge-backed pins from the current graph so any
+                    // rewiring (e.g. buffer insertion on the D input) is reflected.
+                    size_t in_idx = 0, out_idx = 0;
+                    for (size_t i = 0; i < n->pin_conns.size(); ++i) {
+                        const PinConn& pc = n->pin_conns[i];
+                        std::string sig = pc.signal;
+                        if (pc.edge_dir == 2 && out_idx < n->outputs.size()) sig = n->outputs[out_idx++]->name;
+                        else if (pc.edge_dir == 1 && in_idx < n->inputs.size()) sig = n->inputs[in_idx++]->name;
+                        ofs << "." << pc.pin << "(" << sig << ")";
+                        if (i + 1 < n->pin_conns.size()) ofs << ", ";
+                    }
+                } else {
+                    // Positional instance: output first, then inputs.
+                    if (!n->outputs.empty()) ofs << n->outputs[0]->name;
+                    for (auto in : n->inputs) ofs << ", " << in->name;
+                }
                 ofs << ");\n";
             }
         }
