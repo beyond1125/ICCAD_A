@@ -1,70 +1,72 @@
-EDA Agent 系統處理 Testcase 1~5 流程報告
-==========================================
+# ICCAD 2026 Problem A: C++ Machine Technical Report
 
-1. 系統核心架構
----------------
-本系統採用「LLM 代理人 (Agent) + 專業 EDA 引擎 (C++)」的雙層架構：
-*   外部介面 (main.py): 負責讀取自然語言指令，並依照大賽規範輸出 #RESPONSE / #END 標籤。
-*   規劃器 (Planner): 使用大語言模型 (GPT-4o-mini) 拆解用戶意圖，決定呼叫哪些工具。
-*   EDA 引擎 (EDAEngine): 由 C++ 撰寫的高效能 Verilog 解析器與圖形演算法庫，確保數值計算（如深度、計數）的絕對準確。
+This document outlines the architecture, API, and implementation details of the C++ EDA engine core and its integration with the AI agent.
 
-2. 通用處理流程
----------------
-對於每一個 Testcase，系統遵循以下標準作業程序：
-1.  初始化 (Init): 辨識 "This is the beginning of testcase..."，重置引擎狀態並開啟對應的 .log 檔案。
-2.  載入設計 (Load): 呼叫 `load_design` 工具，將 Verilog 檔案解析為記憶體中的圖形結構 (Directed Graph)。
-3.  分析與轉換 (Analyze/Transform): 根據題目要求呼叫對應工具（如 `analyze_depth`, `get_node_info`）。
-4.  結果輸出 (Final Response): LLM 彙整工具回傳的「精確數據」撰寫技術回覆。
-5.  存檔 (Write): 呼叫 `write_design` 將最終網表寫入指定的 _out.v 檔案。
+## System Architecture
 
-3. 各測試案例 (Testcase) 處理細節
---------------------------------
+The system follows a tiered architecture:
+1.  **C++ Core (`parser/parser.cpp`, `parser.hpp`)**: High-performance graph-based netlist representation and algorithmic implementation.
+2.  **Python Engine Wrapper (`eda_engine/engine.py`)**: Subprocess-based bridge between Python and the C++ binary.
+3.  **AI Agent (`agent/`)**: Planner and tool specifications that enable LLMs to interact with the engine.
 
-### Testcase 01 & 02: 基礎讀取與結構檢查
-*   要求：載入設計、列出節點、計算特定路徑深度。
-*   系統處理：
-    - 使用 `load_design` 進行語法解析。
-    - 使用 `list_nodes` 取得所有信號與 Gate 列表。
-    - 使用 `analyze_depth(start, end)` 計算點對點的門級延遲 (Gate levels)。
+---
 
-### Testcase 03: 門級替換與一致性
-*   要求：將特定的 Gate 類型替換（如 AND 換成 NAND），並確保輸出檔案格式正確。
-*   系統處理：
-    - 呼叫 `replace_gate(target, new_type)` 修正記憶體中的圖形節點。
-    - 呼叫 `write_design` 重新產生 Verilog 代碼，確保模組名稱、埠列表 (Ports) 與連接關係維持不變。
+## C++ Core API (Actions)
 
-### Testcase 04: Fanin Cone 最大深度分析 (邏輯瓶頸定位)
-*   要求：計算輸出節點 `n3` 的 Fanin Cone（輸入錐）中的最大邏輯深度。
-*   系統處理優化：
-    - 系統原本僅支援「點對點」深度，為處理此題，我們強化了 C++ 引擎。
-    - 開發了「後向遞迴遍歷算法 (Backward Traversal)」，從目標節點開始向 Primary Inputs 搜尋。
-    - 解決了 LLM 無法判斷起始點的問題，現在只需提供 `end_node` 即可算出完整 Fanin Cone 深度（此例為 14 層）。
+The C++ machine is invoked via CLI with the following actions:
 
-### Testcase 05: Fanout（扇出）精確計數與列舉
-*   要求：計算 Primary Input `n5` 的 Fanout 數量，並列出所有受其直接驅動的 Gates。
-*   系統處理優化：
-    - 針對 LLM 對於長列表容易數錯的問題（例如將 35 個數成 43 個），我們修改了引擎通訊協定。
-    - `get_node_info` 工具現在會主動回傳 `Fanin count` 與 `Fanout count` 的數值。
-    - 在系統提示語 (System Prompt) 中強制規定 LLM 必須直接引用引擎提供的數字，嚴禁自行計數。
-    - 最終確保了 `n5` 的扇出數 35 準確無誤。
+### 1. Design Management
+-   **`load`**: Parses a Verilog-1995 gate-level netlist into an in-memory graph.
+    -   *Implementation*: Regex-based lexical analysis and statement-by-statement parsing. Supports bus expansion (e.g., `input [3:0] n`).
+-   **`write`**: Emits the current in-memory graph back to a Verilog file.
+    -   *Implementation*: Reconstructs module headers, signal declarations (grouping bits back into vectors), and gate instantiations.
 
-4. C++ 網表資料結構 (Data Structure)
------------------------------------
-為了支援高效的網表分析與轉換，C++ 引擎核心使用了以下資料結構：
+### 2. Structural Analysis
+-   **`count_gates`**: Reports total gate counts broken down by type.
+    -   *Implementation*: Iterates through all nodes and tallies those with `NodeType::GATE`.
+-   **`get_info`**: Provides immediate connectivity for a node.
+    -   *Implementation*: Returns node type, gate type (if applicable), fanin/fanout counts, and immediate neighbor names.
 
-### 節點類別 (Node Class)
-每個節點代表 netlist 中的一個信號 (Signal) 或門級實例 (Gate)：
-*   `name`: 節點的唯一名稱（如 `n5`, `g201`）。
-*   `type`: 節點類型（`PRIMARY_INPUT`, `PRIMARY_OUTPUT`, `SIGNAL`, `GATE`）。
-*   `gate_type`: 若為 GATE 類型，則標註其邏輯功能（如 `AND`, `OR`, `DFF`）。
-*   `inputs/outputs`: 使用 `std::vector<Node*>` 儲存指標，構建出雙向連接的圖形結構 (Doubly Linked Graph)，支援快速的前向 (Fanout) 與後向 (Fanin) 遍歷。
+### 3. Path & Depth Analysis
+-   **`calc_depth`**: Computes the longest combinational path depth.
+    -   *Implementation*: Uses **Memory-efficient Dynamic Programming (DP)**. Complex-path depth is computed in $O(V+E)$ time by caching sub-results. Returns `-1` if unreachable.
+-   **`get_critical_path`**: Identifies the specific sequence of nodes along the longest path.
+    -   *Implementation*: Similar to `calc_depth` but maintains a `next_node` pointer for path reconstruction.
+-   **`count_paths`**: Counts all possible combinational paths.
+    -   *Implementation*: Recursive DFS with memoization.
+-   **`list_paths`**: Enumerates the full node sequence for all paths.
+    -   *Implementation*: Depth-First Search (DFS). Includes a 100-path safety truncation.
 
-### 圖形類別 (Graph Class)
-管理整個電路設計的生命週期與演算法：
-*   `nodes`: 使用 `std::unordered_map<std::string, Node*>` 實現以名稱快速索引節點（O(1) 複雜度）。
-*   `all_nodes`: 使用 `std::vector<Node*>` 儲存所有節點指標，便於進行全局遍歷。
-*   `calculate_depth`: 實現動態規劃 (DP) 結合記憶化搜尋 (Memoization)，在 O(V+E) 時間內計算最大邏輯深度。
+### 4. Cone Analysis
+-   **`get_fanin_cone` / `get_fanout_cone`**: Extracts the transitive cone of a node.
+    -   *Implementation*: Breadth-First Search (BFS) / Depth-First Search (DFS) traversal through the graph edges.
+-   **`count_fanin` / `count_fanout`**: Counts the number of gate instances within the transitive cone.
+    -   *Implementation*: Traverses the cone and filters for `GATE` types, excluding the starting node.
+-   **`get_fanin_depth`**: Computes the logic depth considering only the fanin cone of a specific node.
+    -   *Implementation*: Backward-traversal DP starting from the target node to primary inputs.
 
-5. 總結
--------
-系統透過將「邏輯推理」交給 LLM，「精確運算」交給 C++ 引擎，並在兩者之間建立「數值優先」的溝通協定，成功解決了自動化 EDA 流程中常見的幻覺問題，保證了 Testcase 1~5 的高可靠度執行。
+---
+
+## AI Agent Integration (Planner Tools)
+
+The agent maps natural language intents to the following high-level tools:
+
+| Intent Type | Tool Name | C++ Action |
+| :--- | :--- | :--- |
+| Load Design | `load_design` | `load` |
+| Save Design | `write_design` | `write` |
+| Gate Statistics | `count_gates` | `count_gates` |
+| Logical Depth | `analyze_depth` | `calc_depth` |
+| Critical Path | `analyze_critical_path` | `get_critical_path` |
+| Path Existence/Listing | `find_paths` | `list_paths` |
+| Connectivity Info | `get_node_info` | `get_info` |
+| Transitive Fanin | `get_fanin_cone` | `get_fanin_cone` |
+| Transitive Fanout | `get_fanout_cone` | `get_fanout_cone` |
+| Fanin Depth | `get_fanin_depth` | `get_fanin_depth` |
+| Fanin Gate Count | `count_fanin_gates` | `count_fanin` |
+| Fanout Gate Count | `count_fanout_gates` | `count_fanout` |
+
+## Implementation Principles
+-   **Precision**: All gate-level depths ignore signal/wire nodes, counting only logic gates.
+-   **Performance**: DP-based algorithms ensure that even with designs exceeding 15,000 gates (like `test14`), depth and path counts are computed nearly instantaneously.
+-   **Robustness**: Handles bus signals (e.g., `n3[0]`) as discrete nodes in the graph to maintain connectivity accuracy.

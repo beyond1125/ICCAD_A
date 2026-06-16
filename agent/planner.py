@@ -13,6 +13,7 @@ as the tool result so the LLM can recover without crashing the process.
 """
 
 import logging
+import sys
 from typing import Any, Callable, Dict, List
 
 from config import Config
@@ -53,12 +54,17 @@ class Planner:
             "load_design":   engine.load_design,
             "write_design":  engine.write_design,
             "analyze_depth": engine.analyze_depth,
+            "analyze_critical_path": engine.analyze_critical_path,
             "find_paths":    engine.find_paths,
             "get_node_info": engine.get_node_info,
             "list_nodes":    engine.list_nodes,
             "replace_gate":  engine.replace_gate,
             "count_gates":   engine.count_gates,
             "count_fanin_gates": engine.count_fanin_gates,
+            "count_fanout_gates": engine.count_fanout_gates,
+            "get_fanin_cone": engine.get_fanin_cone,
+            "get_fanout_cone": engine.get_fanout_cone,
+            "get_fanin_depth": engine.get_fanin_depth,
         }
 
     # ------------------------------------------------------------------ public

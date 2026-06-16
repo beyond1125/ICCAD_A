@@ -100,6 +100,10 @@ class EDAEngine:
             kwargs["start"] = start_node
         return self._run_action("calc_depth", **kwargs)
 
+    def analyze_critical_path(self, start_node: str, end_node: str) -> str:
+        """Analyze the critical path between two nodes, returning depth and nodes."""
+        return self._run_action("get_critical_path", start=start_node, end=end_node)
+
     def find_paths(
         self, start_node: str, end_node: str, avoid_node: Optional[str] = None
     ) -> str:
@@ -109,6 +113,22 @@ class EDAEngine:
     def count_fanin_gates(self, node_name: str) -> str:
         """Count gates in the fanin cone of a specific node."""
         return self._run_action("count_fanin", node=node_name)
+
+    def count_fanout_gates(self, node_name: str) -> str:
+        """Count gates in the transitive fanout cone of a specific node."""
+        return self._run_action("count_fanout", node=node_name)
+
+    def get_fanin_cone(self, node_name: str) -> str:
+        """Return all nodes in the transitive fanin cone of a specific node."""
+        return self._run_action("get_fanin_cone", node=node_name)
+
+    def get_fanout_cone(self, node_name: str) -> str:
+        """Return all nodes in the transitive fanout cone of a specific node."""
+        return self._run_action("get_fanout_cone", node=node_name)
+
+    def get_fanin_depth(self, node_name: str) -> str:
+        """Calculate the maximum logic depth within the fanin cone of a node."""
+        return self._run_action("get_fanin_depth", node=node_name)
 
     def write_design(self, filepath: str) -> str:
         """Write the design to a file."""
