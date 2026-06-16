@@ -36,6 +36,10 @@ _SYSTEM_PROMPT = (
     "for the user. IMPORTANT: Always use the exact numerical values, counts, "
     "and lists provided directly by the tool outputs. Do not attempt to "
     "re-count items or recalculate values from text lists yourself. "
+    "Whenever a request asks you to transform the design while preserving "
+    "functionality (e.g. 'make sure nothing changes functionally', 'ensure "
+    "functional equivalence'), call check_equivalence after the transformation "
+    "to formally verify the result before writing the design, and report the outcome. "
     "Do not discuss scoring, judging, or the evaluation process."
 )
 
@@ -60,6 +64,7 @@ class Planner:
             "count_gates":   engine.count_gates,
             "count_fanin_gates": engine.count_fanin_gates,
             "insert_buffers": engine.insert_buffers,
+            "check_equivalence": engine.check_equivalence,
         }
 
     # ------------------------------------------------------------------ public

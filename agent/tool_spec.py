@@ -201,6 +201,33 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "check_equivalence",
+            "description": (
+                "Formally verify that the current (possibly transformed) design is "
+                "functionally equivalent to a reference netlist using Berkeley ABC. "
+                "By default the reference is the original as-loaded netlist. Call this "
+                "after any functionality-preserving transformation (buffer insertion, "
+                "optimization, remapping, etc.) to confirm nothing changed functionally. "
+                "Returns EQUIVALENT or NOT EQUIVALENT."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reference": {
+                        "type": "string",
+                        "description": (
+                            "Optional path to a reference Verilog netlist to compare "
+                            "against. Omit to compare against the original loaded design."
+                        ),
+                    }
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "replace_gate",
             "description": (
                 "Replace the type of a specific gate instance in the netlist. "
