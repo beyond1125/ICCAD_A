@@ -43,19 +43,25 @@ def _find_parser_binary() -> str:
 
 
 def _find_abc_binary() -> str:
-    """Resolve the Berkeley ABC executable used for equivalence checking."""
+    """Resolve the Berkeley ABC executable used for equivalence checking.
+
+    Walks up from this file so it works regardless of how deep the package is
+    nested (e.g. src/eda_engine/) and whether ABC lives in abc/ or tools/abc/.
+    """
     env_path = os.environ.get("ABC_BIN")
     if env_path and os.path.isfile(env_path):
         return os.path.abspath(env_path)
-    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    for cand in (
-        os.path.join(root, "abc", "abc"),
-        os.path.join(root, "tools", "abc", "abc"),
-        os.path.join(root, "abc", "abc.exe"),
-    ):
-        if os.path.isfile(cand):
-            return cand
-    return os.path.join(root, "abc", "abc")
+    here = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(6):
+        for cand in (
+            os.path.join(here, "abc", "abc"),
+            os.path.join(here, "tools", "abc", "abc"),
+            os.path.join(here, "abc", "abc.exe"),
+        ):
+            if os.path.isfile(cand):
+                return cand
+        here = os.path.dirname(here)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "abc", "abc")
 
 
 class EDAEngine:
