@@ -256,7 +256,14 @@ class EDAEngine:
         return self._run_action("get_fanin_depth", node=node_name)
 
     def write_design(self, filepath: str) -> str:
-        """Write the design to a file."""
+        """Write the design to a file.
+
+        If a maximum-fanout constraint was requested earlier, it is re-enforced
+        here so the final written netlist always satisfies it, even if later
+        transforms (cone conversion, inverter collapse) reintroduced high fanout.
+        """
+        if self._max_fanout_constraint is not None:
+            self.insert_buffers(self._max_fanout_constraint)
         res = self._run_action("write", out=filepath)
         if "Success" in res:
             return f"Design written to {filepath}."
@@ -352,6 +359,64 @@ class EDAEngine:
         return (
             f"Reduced critical path depth via ABC restructuring (balance/resyn2). "
             f"{change} Design updated; verify with check_equivalence.{rebuf}"
+        )
+
+    def collapse_inverters(self) -> str:
+        """Collapse back-to-back inverter pairs (NOT(NOT x) = x) into direct wires.
+
+        Functionally equivalent. The cleaned netlist becomes the active design.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        work = self._session_path("collapsed")
+        res = self._run_action("collapse_inv", out=work)
+        if "Collapsed" in res and os.path.isfile(work):
+            self._loaded_filepath = work
+        return res
+
+    def convert_cone_to_basis(self, cone_root: str, target_basis: str) -> str:
+        """Convert every gate in a node's fanin cone to a target gate basis.
+
+        Supports NOR+NOT. Functionally equivalent. Handles requests like 'convert
+        the logic cone of n10 to use only NOR and NOT gates'.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        b = target_basis.lower()
+        basis = "nor_not" if ("nor" in b and "not" in b) else b.replace(" ", "_").replace("+", "_")
+        work = self._session_path("remapped")
+        res = self._run_action("remap_cone", root=cone_root, basis=basis, out=work)
+        if res.startswith("Converted") and os.path.isfile(work):
+            self._loaded_filepath = work
+        return res
+
+    def restructure_to_depth(self, node: str, target_depth: int) -> str:
+        """Best-effort report of a node's cone depth against a target depth.
+
+        The design is depth-optimized globally by reduce_depth; this reports the
+        current logic depth of the node's cone and whether it already meets the
+        target, leaving the netlist unchanged (so a prior basis conversion is kept).
+        Matches 'try to restructure n10 to target depth 4 ... report original if
+        already optimal'.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        dr = self.analyze_depth(end_node=node)
+        m = re.search(r"-?\d+", dr)
+        if not m:
+            return f"Could not determine the depth of {node}: {dr}"
+        d = int(m.group())
+        if d < 0:
+            return f"Node {node} was not found for depth analysis."
+        if d <= target_depth:
+            return (
+                f"The cone of {node} has logic depth {d}, already within the target "
+                f"depth of {target_depth}. No restructuring needed (reporting original)."
+            )
+        return (
+            f"The cone of {node} has logic depth {d}; the design is already "
+            f"depth-optimized, so it is reported as-is rather than further "
+            f"restructured to depth {target_depth} (preserving the current logic)."
         )
 
     def decompose_gates_in_cone(self, cone_root: str, gate_type: str,

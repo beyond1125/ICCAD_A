@@ -90,6 +90,20 @@ int main(int argc, char** argv) {
         if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
         std::cout << "Removed " << removed << " dangling gate(s) not contributing to any output."
                   << std::endl;
+    } else if (action == "collapse_inv") {
+        int n = g.collapse_inverters();
+        if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
+        std::cout << "Collapsed " << n << " redundant inverter(s) from back-to-back pairs."
+                  << std::endl;
+    } else if (action == "remap_cone") {
+        int n = g.remap_cone_to_basis(args["--root"], args["--basis"]);
+        if (n < 0) {
+            std::cout << "Failure: unsupported basis '" << args["--basis"] << "'." << std::endl;
+        } else {
+            if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
+            std::cout << "Converted " << n << " gate(s) in the cone of " << args["--root"]
+                      << " to " << args["--basis"] << " logic." << std::endl;
+        }
     } else if (action == "write_blif") {
         if (args.count("--out")) {
             g.write_blif(args["--out"]);

@@ -588,6 +588,107 @@ int Graph::decompose_in_cone(const std::string& root, const std::string& from_ty
     return (int)targets.size();
 }
 
+// Collapse back-to-back inverters: NOT(NOT(x)) == x. g2's consumers are rewired to
+// x and g2 removed; g1 removed too if it then drives nothing. Iterates to fully
+// collapse chains. A pair feeding a primary output is left intact. Returns count removed.
+int Graph::collapse_inverters() {
+    int removed = 0; bool changed = true;
+    std::unordered_set<Node*> dead;
+    auto rm = [&](std::vector<Node*>& v, Node* x) { v.erase(std::remove(v.begin(), v.end(), x), v.end()); };
+    while (changed) {
+        changed = false;
+        std::vector<Node*> nots;
+        for (Node* n : all_nodes)
+            if (!dead.count(n) && n->type == NodeType::GATE && n->gate_type == GateType::NOT) nots.push_back(n);
+        for (Node* g2 : nots) {
+            if (dead.count(g2) || g2->inputs.empty() || g2->outputs.empty()) continue;
+            Node* s = g2->inputs[0];
+            if (dead.count(s) || s->inputs.size() != 1) continue;
+            Node* g1 = s->inputs[0];
+            if (dead.count(g1) || g1->type != NodeType::GATE || g1->gate_type != GateType::NOT || g1->inputs.empty()) continue;
+            Node* x = g1->inputs[0]; Node* o = g2->outputs[0];
+            if (dead.count(x) || dead.count(o) || o->type == NodeType::PRIMARY_OUTPUT || o == x) continue;
+            for (Node* c : std::vector<Node*>(o->outputs)) {
+                for (Node*& in : c->inputs) if (in == o) in = x;
+                x->outputs.push_back(c);
+            }
+            o->outputs.clear(); rm(s->outputs, g2);
+            dead.insert(g2); dead.insert(o); ++removed; changed = true;
+            if (s->outputs.empty() && s->type != NodeType::PRIMARY_OUTPUT) {
+                rm(x->outputs, g1); dead.insert(g1); dead.insert(s); ++removed;
+            }
+        }
+    }
+    if (!dead.empty()) {
+        std::vector<Node*> keep, drop;
+        for (Node* n : all_nodes) (dead.count(n) ? drop : keep).push_back(n);
+        for (Node* n : keep) {
+            std::vector<Node*> in, out;
+            for (Node* x : n->inputs)  if (!dead.count(x)) in.push_back(x);
+            for (Node* x : n->outputs) if (!dead.count(x)) out.push_back(x);
+            n->inputs.swap(in); n->outputs.swap(out);
+        }
+        for (Node* n : drop) nodes.erase(n->name);
+        all_nodes.swap(keep);
+        for (Node* n : drop) delete n;
+    }
+    return removed;
+}
+
+// Convert every gate in the fanin cone of `root` to use only the given basis.
+// Supports NOR+NOT: AND(a,b)=NOR(!a,!b), OR(a,b)=NOT(NOR(a,b)), NAND(a,b)=
+// NOT(NOR(!a,!b)), BUF(a)=NOT(!a); NOT/NOR are already in the basis. Inverters are
+// shared. Returns the number of gates rewritten, or -1 for an unsupported basis.
+int Graph::remap_cone_to_basis(const std::string& root, const std::string& basis) {
+    if (basis != "nor_not") return -1;
+    auto cone = fanin_cone_gates(root);
+    std::vector<Node*> targets;
+    for (Node* g : cone) {
+        GateType t = g->gate_type;
+        if (t == GateType::AND || t == GateType::OR || t == GateType::NAND || t == GateType::BUF ||
+            t == GateType::XOR || t == GateType::XNOR)
+            targets.push_back(g);
+    }
+    int ctr = 0;
+    auto fresh = [&](const std::string& p) { std::string nm; do { nm = p + std::to_string(ctr++); } while (nodes.count(nm)); return nm; };
+    auto rm = [&](std::vector<Node*>& v, Node* x) { v.erase(std::remove(v.begin(), v.end(), x), v.end()); };
+    std::unordered_map<Node*, Node*> inv_cache;
+    auto inv = [&](Node* x) -> Node* {
+        auto it = inv_cache.find(x); if (it != inv_cache.end()) return it->second;
+        Node* gg = get_or_create_node(fresh("__rm_g"), NodeType::GATE); gg->gate_type = GateType::NOT;
+        Node* o = get_or_create_node(fresh("__rm_n")); add_edge(x, gg); add_edge(gg, o);
+        inv_cache[x] = o; return o;
+    };
+    auto mknor = [&](Node* a, Node* b) -> Node* {
+        Node* gg = get_or_create_node(fresh("__rm_g"), NodeType::GATE); gg->gate_type = GateType::NOR;
+        Node* o = get_or_create_node(fresh("__rm_n")); add_edge(a, gg); add_edge(b, gg); add_edge(gg, o);
+        return o;
+    };
+    for (Node* g : targets) {
+        GateType t = g->gate_type;
+        Node* a = g->inputs[0]; Node* b = (g->inputs.size() > 1 ? g->inputs[1] : nullptr);
+        rm(a->outputs, g); if (b) rm(b->outputs, g); g->inputs.clear();
+        if (t == GateType::AND) {
+            add_edge(inv(a), g); add_edge(inv(b), g); g->gate_type = GateType::NOR;
+        } else if (t == GateType::BUF) {
+            add_edge(inv(a), g); g->gate_type = GateType::NOT;
+        } else if (t == GateType::OR) {
+            add_edge(mknor(a, b), g); g->gate_type = GateType::NOT;
+        } else if (t == GateType::NAND) {
+            add_edge(mknor(inv(a), inv(b)), g); g->gate_type = GateType::NOT;
+        } else if (t == GateType::XOR) {       // XOR = NOT(XNOR), XNOR = NOR(a&!b, !a&b)
+            Node* p = mknor(inv(a), b);        // a & !b
+            Node* q = mknor(a, inv(b));        // !a & b
+            add_edge(mknor(p, q), g); g->gate_type = GateType::NOT;
+        } else if (t == GateType::XNOR) {
+            Node* p = mknor(inv(a), b);
+            Node* q = mknor(a, inv(b));
+            add_edge(p, g); add_edge(q, g); g->gate_type = GateType::NOR;
+        }
+    }
+    return (int)targets.size();
+}
+
 void Graph::find_all_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, std::vector<std::vector<Node*>>& all_paths) {
     if (curr == avoid) return;
     path.push_back(curr);

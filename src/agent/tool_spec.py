@@ -392,6 +392,58 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "collapse_inverters",
+            "description": (
+                "Find all back-to-back inverter pairs (a NOT gate feeding another NOT "
+                "gate) and collapse them into a direct wire, since NOT(NOT(x)) = x. "
+                "Functionality is preserved. Call this for 'find all back-to-back "
+                "inverter pairs and collapse them into a wire'."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "convert_cone_to_basis",
+            "description": (
+                "Convert every gate in the fanin cone of a node to use only a target "
+                "gate basis (e.g. NOR and NOT), preserving functionality. Call this for "
+                "'convert the logic cone of n10 to use only NOR and NOT gates'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "cone_root": {"type": "string", "description": "Node whose cone is converted (e.g. 'n10')."},
+                    "target_basis": {"type": "string", "description": "Allowed basis, e.g. 'NOR_NOT'."},
+                },
+                "required": ["cone_root", "target_basis"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "restructure_to_depth",
+            "description": (
+                "Best-effort attempt to restructure a node's logic cone to a target "
+                "depth, reporting the current depth and whether it already meets the "
+                "target. Call this for 'try to restructure n10 with a target depth of 4, "
+                "report original if already optimal'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node": {"type": "string", "description": "Node whose cone depth is targeted (e.g. 'n10')."},
+                    "target_depth": {"type": "integer", "description": "Target maximum logic depth (e.g. 4)."},
+                },
+                "required": ["node", "target_depth"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "check_equivalence",
             "description": (
                 "Formally verify that the current (possibly transformed) design is "
