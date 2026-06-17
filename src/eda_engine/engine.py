@@ -157,13 +157,83 @@ class EDAEngine:
         """Analyze the critical path between two nodes, returning depth and nodes."""
         return self._run_action("get_critical_path", start=start_node, end=end_node)
 
+    # Threshold: if the C++ parser returns more than this many paths, the raw
+    # output is too large for the LLM context window.  Write the full list to a
+    # file and return a compact summary instead.
+    _PATH_FILE_THRESHOLD = 50
+
     def find_paths(
         self, start_node: str, end_node: str, avoid_node: Optional[str] = None
     ) -> str:
-        """Return all paths between two nodes."""
-        return self._run_action(
+        """Return all paths between two nodes.
+
+        When the number of paths exceeds ``_PATH_FILE_THRESHOLD``, the full
+        path list is serialized to a log file in the testcase directory and a
+        compact JSON summary (with status, total count, file path, and a few
+        sample paths) is returned so the LLM can report the result without
+        being overwhelmed by hundreds of thousands of lines.
+        """
+        raw = self._run_action(
             "list_paths", start=start_node, end=end_node, avoid=avoid_node or ""
         )
+
+        # If the engine returned an error, pass it through unchanged.
+        if raw.startswith("Error"):
+            return raw
+
+        # ── Parse the real total from the C++ header line ─────────────────
+        # The C++ parser emits a header like "Found 289366 paths:" followed
+        # by up to ~101 printed path lines.  The header number is the ground
+        # truth; the printed lines may be truncated.
+        header_match = re.search(r"Found\s+(\d+)\s+paths?:", raw)
+        total = int(header_match.group(1)) if header_match else 0
+
+        # Collect the individual path lines (may be fewer than `total`).
+        path_lines = [ln for ln in raw.splitlines() if " -> " in ln]
+
+        # If no header was found, fall back to counting printed lines.
+        if total == 0:
+            total = len(path_lines)
+
+        if total <= self._PATH_FILE_THRESHOLD:
+            # Small result — return the raw output directly.
+            return raw
+
+        # ── large result: write to file and return summary ────────────────
+        import json
+
+        # Derive the testcase directory from the loaded design path.
+        save_dir = self._testcase_dir()
+
+        # Use a descriptive unique filename so multiple find_paths calls in
+        # the same testcase do not overwrite each other.
+        avoid_tag = f"_avoid_{avoid_node}" if avoid_node else ""
+        filename = f"paths_{start_node}_to_{end_node}{avoid_tag}.log"
+        # Sanitise brackets in bus-index names for safe filenames.
+        filename = filename.replace("[", "_").replace("]", "_")
+        log_path = os.path.join(save_dir, filename) if save_dir else filename
+
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(raw)
+
+        # Build a compact summary for the LLM.
+        sample = path_lines[:3]
+        summary = {
+            "status": "success",
+            "total_paths_found": total,
+            "saved_to_file": log_path,
+            "sample_paths": sample,
+        }
+        return json.dumps(summary, ensure_ascii=False, indent=2)
+
+    def _testcase_dir(self) -> Optional[str]:
+        """Infer the testcase directory from the loaded design path.
+
+        e.g. ``testcase/test14/test14.v``  →  ``testcase/test14``
+        """
+        if self._loaded_filepath:
+            return os.path.dirname(self._loaded_filepath)
+        return None
 
     def count_fanin_gates(self, node_name: str) -> str:
         """Count gates in the fanin cone of a specific node."""
