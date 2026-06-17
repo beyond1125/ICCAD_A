@@ -93,6 +93,11 @@ int main(int argc, char** argv) {
     } else if (action == "outputs_over_depth") {
         int mx = args.count("--max") ? std::stoi(args["--max"]) : 4;
         std::cout << g.outputs_over_depth(mx) << std::endl;
+    } else if (action == "dedicated_buffers") {
+        int n = g.insert_dedicated_buffers(args["--signal"]);
+        if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
+        std::cout << "Added " << n << " dedicated buffer(s) on signal " << args["--signal"]
+                  << " (one per load)." << std::endl;
     } else if (action == "merge_dup") {
         int n = g.merge_duplicate_gates();
         if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);

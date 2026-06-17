@@ -293,6 +293,20 @@ class EDAEngine:
             self._max_fanout_constraint = max_fanout
         return res
 
+    def insert_dedicated_buffers(self, signal: str) -> str:
+        """Insert a dedicated BUF gate for each load of a signal (signal -> buf -> load).
+
+        Functionally equivalent. Handles 'insert a BUF gate on signal n2 so that each
+        load of n2 is driven through a dedicated buffer'.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        work = self._session_path("dedbuf")
+        res = self._run_action("dedicated_buffers", signal=signal, out=work)
+        if "Added" in res and os.path.isfile(work):
+            self._loaded_filepath = work
+        return res
+
     def reduce_depth(self) -> str:
         """Reduce critical-path depth by restructuring the combinational logic.
 

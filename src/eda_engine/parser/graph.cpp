@@ -506,6 +506,33 @@ void Graph::write_blif(const std::string& filename) {
     ofs << ".end\n";
 }
 
+// Insert a dedicated BUF gate for every load of `signal`: each consumer pin that
+// read the signal now reads its own buffer of it (signal -> buf_i -> load_i).
+// Functionally transparent. Returns the number of buffers added.
+int Graph::insert_dedicated_buffers(const std::string& signal) {
+    if (!nodes.count(signal)) return 0;
+    Node* s = nodes[signal];
+    std::vector<std::pair<Node*, int>> loads;
+    std::unordered_map<Node*, bool> seen;
+    for (Node* c : s->outputs) {
+        if (seen[c]) continue;
+        seen[c] = true;
+        for (int i = 0; i < (int)c->inputs.size(); ++i)
+            if (c->inputs[i] == s) loads.push_back({c, i});
+    }
+    s->outputs.clear();                          // rebuilt to drive the new buffers
+    int ctr = 0, count = 0;
+    auto fresh = [&](const std::string& p) { std::string nm; do { nm = p + std::to_string(ctr++); } while (nodes.count(nm)); return nm; };
+    for (auto& load : loads) {
+        Node* buf = get_or_create_node(fresh("__db_g"), NodeType::GATE); buf->gate_type = GateType::BUF;
+        Node* w = get_or_create_node(fresh("__db_n"));
+        add_edge(s, buf); add_edge(buf, w);
+        load.first->inputs[load.second] = w; w->outputs.push_back(load.first);
+        ++count;
+    }
+    return count;
+}
+
 int Graph::insert_buffers(int max_fanout) {
     if (max_fanout < 2) return 0;
     int buf_count = 0, name_ctr = 0;

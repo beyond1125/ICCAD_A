@@ -305,6 +305,26 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "insert_dedicated_buffers",
+            "description": (
+                "Insert a dedicated BUF gate for every load of a given signal, so each "
+                "load is driven through its own buffer. Functionality is preserved. Call "
+                "this for 'insert a BUF gate on signal n2 so that each load of n2 is "
+                "driven through a dedicated buffer'. (Different from insert_buffers, "
+                "which limits maximum fanout with a buffer tree.)"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "signal": {"type": "string", "description": "Signal whose loads get dedicated buffers (e.g. 'n2')."},
+                },
+                "required": ["signal"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "reduce_depth",
             "description": (
                 "Reduce the critical-path / maximum logic depth of the design by "

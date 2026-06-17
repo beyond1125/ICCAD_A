@@ -76,6 +76,7 @@ class Planner:
             "count_gates":   engine.count_gates,
             "count_fanin_gates": engine.count_fanin_gates,
             "insert_buffers": engine.insert_buffers,
+            "insert_dedicated_buffers": engine.insert_dedicated_buffers,
             "reduce_depth": engine.reduce_depth,
             "remove_dangling": engine.remove_dangling,
             "rename_node": engine.rename_node,

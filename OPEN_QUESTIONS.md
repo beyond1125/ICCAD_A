@@ -142,6 +142,20 @@ post-optimization.
 
 ---
 
+## Analysis tools still needed (teammate's domain)
+
+From test31 onward the testcases are analysis-heavy. The transform parts are done; these
+**analysis** queries need building (some can reuse the ABC/flop-cut infra):
+- **Constant-output check** — "is output n16 always 0 regardless of inputs?" (SAT/const check). test31.
+- **Shared fanin-cone gates** — "gates shared between the fanin cones of n16 and n17" (structural
+  intersection of two fanin cones; `fanin_cone_gates` already exists to build on). test31.
+- **Boolean equation extraction** — "derive the Boolean equation for n16 in terms of PIs"
+  (SOP/BDD). test31, 35, 37, 39.
+- **Signal functional equivalence** — "check functional equivalence between n1287 and n2404"
+  (SAT miter of two internal signals; reuses the cec/BLIF infra). test17–20, 31, 33, 35.
+- **Max depth to any DFF D-pin**, **register-to-register paths**, **symmetry**, **cut detection**,
+  **articulation points**, **PI/PO listing with widths** — various later testcases.
+
 ## Quick index by testcase
 
 | TC | Open/decided items |
