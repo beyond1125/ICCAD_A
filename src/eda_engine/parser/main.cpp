@@ -90,6 +90,9 @@ int main(int argc, char** argv) {
         if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
         std::cout << "Removed " << removed << " dangling gate(s) not contributing to any output."
                   << std::endl;
+    } else if (action == "outputs_over_depth") {
+        int mx = args.count("--max") ? std::stoi(args["--max"]) : 4;
+        std::cout << g.outputs_over_depth(mx) << std::endl;
     } else if (action == "collapse_inv") {
         int n = g.collapse_inverters();
         if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);

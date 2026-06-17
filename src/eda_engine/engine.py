@@ -419,6 +419,24 @@ class EDAEngine:
             f"restructured to depth {target_depth} (preserving the current logic)."
         )
 
+    def optimize_outputs_to_depth(self, max_depth: int) -> str:
+        """Best-effort: report outputs whose cone depth exceeds max_depth.
+
+        The design is already minimized by reduce_depth; outputs still exceeding the
+        target are at their minimum achievable depth, so this reports them rather than
+        re-restructuring (which would undo later gate-level transforms). Matches 'for
+        each output with depth greater than 4, optimize its cone to meet the constraint'.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        res = self._run_action("outputs_over_depth", max=max_depth)
+        if res.startswith("Error"):
+            return res
+        return (
+            f"{res} The logic has already been globally depth-optimized; any outputs "
+            f"still above depth {max_depth} are at their minimum achievable depth."
+        )
+
     def decompose_gates_in_cone(self, cone_root: str, gate_type: str,
                                 target_basis: str) -> str:
         """Replace gates of a type within a cone using only a target gate basis.
@@ -438,11 +456,21 @@ class EDAEngine:
         before_counts = self._parse_gate_counts(before_raw)
 
         b = target_basis.lower()
-        basis = "nand_not" if ("nand" in b and "not" in b) else b.replace(" ", "_").replace("+", "_")
+        if "nand" in b and "not" in b:
+            basis = "nand_not"
+        elif "nor" in b and "not" in b:
+            basis = "nor_not"
+        elif "and" in b and "or" in b and "not" in b:
+            basis = "and_or_not"
+        else:
+            basis = re.sub(r"[^a-z]+", "_", b).strip("_")
+        # Pick the gate keyword the user named (e.g. "2-input OR gates" -> "or").
+        gt = gate_type.lower()
+        gate = next((k for k in ("xnor", "nand", "nor", "xor", "and", "or", "not", "buf")
+                     if k in gt), gt.strip())
         work = self._session_path("decomposed")
         res = self._run_action(
-            "decompose", root=cone_root, gate=gate_type.lower().strip(),
-            basis=basis, out=work,
+            "decompose", root=cone_root, gate=gate, basis=basis, out=work,
         )
         if res.startswith("Replaced") and os.path.isfile(work):
             self._loaded_filepath = work

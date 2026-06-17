@@ -83,6 +83,7 @@ class Planner:
             "collapse_inverters": engine.collapse_inverters,
             "convert_cone_to_basis": engine.convert_cone_to_basis,
             "restructure_to_depth": engine.restructure_to_depth,
+            "optimize_outputs_to_depth": engine.optimize_outputs_to_depth,
             "check_equivalence": engine.check_equivalence,
             "count_fanout_gates": engine.count_fanout_gates,
             "get_fanin_cone": engine.get_fanin_cone,

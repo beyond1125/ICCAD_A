@@ -449,11 +449,25 @@ void Graph::write_blif(const std::string& filename) {
             else comb.push_back(n);
         }
     }
+    // DFF Q nets become primary inputs in the flop-cut model. A registered primary
+    // output (a PO net that is also a DFF Q) would then be both a .input and a .output,
+    // which BLIF cannot express. Such an output is just the flop's free Q (trivially
+    // equal between designs), so it is omitted from .outputs; the real next-state check
+    // is its __D_<inst> tap.
+    std::unordered_set<std::string> q_nets;
+    for (Node* d : dffs) if (!d->outputs.empty()) q_nets.insert(d->outputs[0]->name);
+
+    // Emit each input net once. A net can repeat if multiple flip-flops drive the
+    // same Q (some netlists wire two DFFs to one net); in the cut it is a single
+    // free primary input, while each flop still gets its own __D_<inst> tap.
+    std::unordered_set<std::string> emitted_in;
     ofs << ".model top\n.inputs";
-    for (Node* p : pis) ofs << " " << p->name;
-    for (Node* d : dffs) if (!d->outputs.empty()) ofs << " " << d->outputs[0]->name;
+    for (Node* p : pis) if (emitted_in.insert(p->name).second) ofs << " " << p->name;
+    for (Node* d : dffs)
+        if (!d->outputs.empty() && emitted_in.insert(d->outputs[0]->name).second)
+            ofs << " " << d->outputs[0]->name;
     ofs << "\n.outputs";
-    for (Node* p : pos) ofs << " " << p->name;
+    for (Node* p : pos) if (!q_nets.count(p->name)) ofs << " " << p->name;
     for (Node* d : dffs) ofs << " __D_" << d->name;
     ofs << "\n";
     for (Node* g : comb) {
@@ -570,22 +584,61 @@ std::unordered_set<Node*> Graph::fanin_cone_gates(const std::string& root) {
 }
 
 int Graph::decompose_in_cone(const std::string& root, const std::string& from_type, const std::string& basis) {
-    if (from_type != "or" || basis != "nand_not") return -1;
-    auto cone = fanin_cone_gates(root); std::vector<Node*> targets;
-    for (Node* g : cone) if (g->gate_type == GateType::OR && g->inputs.size() == 2) targets.push_back(g);
-    int ctr = 0; auto fresh = [&](const std::string& pfx) {
+    auto cone = fanin_cone_gates(root);
+    int ctr = 0;
+    auto fresh = [&](const std::string& pfx) {
         std::string nm; do { nm = pfx + std::to_string(ctr++); } while (nodes.count(nm)); return nm;
     };
     auto rm = [&](std::vector<Node*>& v, Node* x) { v.erase(std::remove(v.begin(), v.end(), x), v.end()); };
-    for (Node* g : targets) {
-        Node* a = g->inputs[0]; Node* b = g->inputs[1]; rm(a->outputs, g); rm(b->outputs, g);
-        Node* n1 = get_or_create_node(fresh("__dec_g"), NodeType::GATE); n1->gate_type = GateType::NOT;
-        Node* t1 = get_or_create_node(fresh("__dec_n")); add_edge(a, n1); add_edge(n1, t1);
-        Node* n2 = get_or_create_node(fresh("__dec_g"), NodeType::GATE); n2->gate_type = GateType::NOT;
-        Node* t2 = get_or_create_node(fresh("__dec_n")); add_edge(b, n2); add_edge(n2, t2);
-        g->inputs.clear(); add_edge(t1, g); add_edge(t2, g); g->gate_type = GateType::NAND;
+    auto mk = [&](GateType t, std::vector<Node*> ins) -> Node* {
+        Node* g = get_or_create_node(fresh("__dec_g"), NodeType::GATE); g->gate_type = t;
+        Node* o = get_or_create_node(fresh("__dec_n"));
+        for (Node* x : ins) add_edge(x, g);
+        add_edge(g, o); return o;
+    };
+
+    if (from_type == "or" && basis == "nand_not") {        // OR(a,b) = NAND(!a,!b)
+        std::vector<Node*> targets;
+        for (Node* g : cone) if (g->gate_type == GateType::OR && g->inputs.size() == 2) targets.push_back(g);
+        for (Node* g : targets) {
+            Node* a = g->inputs[0]; Node* b = g->inputs[1]; rm(a->outputs, g); rm(b->outputs, g);
+            Node* t1 = mk(GateType::NOT, {a}); Node* t2 = mk(GateType::NOT, {b});
+            g->inputs.clear(); add_edge(t1, g); add_edge(t2, g); g->gate_type = GateType::NAND;
+        }
+        return (int)targets.size();
     }
-    return (int)targets.size();
+    if (from_type == "xor" && basis == "and_or_not") {     // XOR(a,b) = OR(a&!b, !a&b)
+        std::vector<Node*> targets;
+        for (Node* g : cone) if (g->gate_type == GateType::XOR && g->inputs.size() == 2) targets.push_back(g);
+        for (Node* g : targets) {
+            Node* a = g->inputs[0]; Node* b = g->inputs[1]; rm(a->outputs, g); rm(b->outputs, g);
+            Node* na = mk(GateType::NOT, {a}); Node* nb = mk(GateType::NOT, {b});
+            Node* t1 = mk(GateType::AND, {a, nb}); Node* t2 = mk(GateType::AND, {na, b});
+            g->inputs.clear(); add_edge(t1, g); add_edge(t2, g); g->gate_type = GateType::OR;
+        }
+        return (int)targets.size();
+    }
+    return -1;
+}
+
+// Report primary outputs whose combinational logic depth exceeds max_depth, using a
+// single levelization pass (DFF outputs are level 0). Returns a count and a sample.
+std::string Graph::outputs_over_depth(int max_depth) {
+    auto levels = compute_levels(nullptr);
+    std::vector<std::pair<std::string, int>> over;
+    for (Node* n : all_nodes)
+        if (n->type == NodeType::PRIMARY_OUTPUT) {
+            int d = levels.count(n) ? levels[n] : -1;
+            if (d > max_depth) over.push_back({n->name, d});
+        }
+    std::ostringstream ss;
+    ss << over.size() << " output(s) have logic depth greater than " << max_depth << ".";
+    int shown = 0;
+    for (auto& p : over) {
+        if (shown++ >= 20) { ss << " ..."; break; }
+        ss << " " << p.first << "(" << p.second << ")";
+    }
+    return ss.str();
 }
 
 // Collapse back-to-back inverters: NOT(NOT(x)) == x. g2's consumers are rewired to

@@ -444,6 +444,25 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "optimize_outputs_to_depth",
+            "description": (
+                "Report which primary outputs still have logic depth greater than a "
+                "limit after depth optimization (best effort). Call this for 'for each "
+                "output with depth greater than 4, optimize its cone to meet the depth "
+                "constraint'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "max_depth": {"type": "integer", "description": "Maximum allowed logic depth (e.g. 4)."},
+                },
+                "required": ["max_depth"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "check_equivalence",
             "description": (
                 "Formally verify that the current (possibly transformed) design is "

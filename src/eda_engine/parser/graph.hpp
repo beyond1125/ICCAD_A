@@ -45,6 +45,7 @@ public:
     int decompose_in_cone(const std::string& root, const std::string& from_type, const std::string& basis);
     int collapse_inverters();
     int remap_cone_to_basis(const std::string& root, const std::string& basis);
+    std::string outputs_over_depth(int max_depth);
 
 private:
     void find_all_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, std::vector<std::vector<Node*>>& all_paths);
