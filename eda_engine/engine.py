@@ -25,20 +25,20 @@ def _find_parser_binary() -> str:
     if env_path and os.path.isfile(env_path):
         return os.path.abspath(env_path)
 
-    parser_dir = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "parser")
+    core_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "core")
     )
     if sys.platform == "win32":
-        candidates = ("parser_cpp.exe", "parser_cpp")
+        candidates = ("eda_core.exe", "eda_core")
     else:
-        candidates = ("parser_cpp", "parser_cpp.exe")
+        candidates = ("eda_core", "eda_core.exe")
 
     for name in candidates:
-        path = os.path.join(parser_dir, name)
+        path = os.path.join(core_dir, name)
         if os.path.isfile(path):
             return path
 
-    return os.path.join(parser_dir, candidates[0])
+    return os.path.join(core_dir, candidates[0])
 
 
 class EDAEngine:
@@ -109,6 +109,30 @@ class EDAEngine:
     def count_fanin_gates(self, node_name: str) -> str:
         """Count gates in the fanin cone of a specific node."""
         return self._run_action("count_fanin", node=node_name)
+
+    def get_fanin_depth(self, node_name: str) -> str:
+        """Calculate maximum logic depth of the fanin cone."""
+        return self._run_action("fanin_depth", node=node_name)
+
+    def path_exists(self, start_node: str, end_node: str, avoid_node: Optional[str] = None) -> str:
+        """Check if a path exists between two nodes."""
+        return self._run_action("path_exists", start=start_node, end=end_node, avoid=avoid_node or "")
+
+    def get_fanout(self, node_name: str) -> str:
+        """Get the number of gates driven by the node."""
+        return self._run_action("get_fanout", node=node_name)
+
+    def get_successors(self, node_name: str) -> str:
+        """List immediate successors of a node."""
+        return self._run_action("get_successors", node=node_name)
+
+    def get_transitive_fanin(self, node_name: str) -> str:
+        """Enumerate nodes in the transitive fanin cone."""
+        return self._run_action("get_tfanin", node=node_name)
+
+    def get_transitive_fanout(self, node_name: str) -> str:
+        """Enumerate nodes in the transitive fanout cone."""
+        return self._run_action("get_tfanout", node=node_name)
 
     def write_design(self, filepath: str) -> str:
         """Write the design to a file."""

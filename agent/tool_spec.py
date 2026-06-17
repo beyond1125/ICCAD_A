@@ -56,6 +56,54 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "path_exists",
+            "description": (
+                "Determine whether a combinational path exists from start_node to "
+                "end_node, optionally avoiding a specific node."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start_node": {
+                        "type": "string",
+                        "description": "Source signal name or primary input.",
+                    },
+                    "end_node": {
+                        "type": "string",
+                        "description": "Sink signal name or primary output.",
+                    },
+                    "avoid_node": {
+                        "type": "string",
+                        "description": "Optional node that the path must not pass through.",
+                    },
+                },
+                "required": ["start_node", "end_node"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_fanin_depth",
+            "description": (
+                "Compute the maximum logic depth of the transitive fanin cone "
+                "for a specific output signal or gate."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The target signal or gate name.",
+                    }
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "analyze_depth",
             "description": (
                 "Compute the maximum combinational logic depth (critical-path length in "
@@ -200,6 +248,86 @@ EDA_TOOLS: List[Dict[str, Any]] = [
                     },
                 },
                 "required": ["target", "new_type"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_successors",
+            "description": (
+                "List all immediate successor nodes (signals or gates) "
+                "driven by the given node."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The name of the signal or gate instance.",
+                    }
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_transitive_fanin",
+            "description": (
+                "Recursively find all nodes in the transitive fanin cone "
+                "of a specific signal or gate."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The target signal or gate name.",
+                    }
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_transitive_fanout",
+            "description": (
+                "Recursively find all nodes in the transitive fanout cone "
+                "of a specific signal or gate."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The target signal or gate name.",
+                    }
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_fanout",
+            "description": (
+                "Get the fanout count of a specific node (signal or gate). "
+                "For a gate, this returns the number of gates driven by its output signal."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The name of the signal or gate instance.",
+                    }
+                },
+                "required": ["node_name"],
             },
         },
     },

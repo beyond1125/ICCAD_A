@@ -9,14 +9,13 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PARSER_DIR = os.path.join(ROOT, "parser")
-SRC = os.path.join(PARSER_DIR, "parser.cpp")
+CORE_DIR = os.path.join(ROOT, "core")
 
 
 def _output_path() -> str:
     if sys.platform == "win32":
-        return os.path.join(PARSER_DIR, "parser_cpp.exe")
-    return os.path.join(PARSER_DIR, "parser_cpp")
+        return os.path.join(CORE_DIR, "eda_core.exe")
+    return os.path.join(CORE_DIR, "eda_core")
 
 
 def main() -> None:
@@ -24,8 +23,15 @@ def main() -> None:
     if not compiler:
         raise SystemExit("No C++ compiler found. Install g++ or set CXX.")
 
+    # Get all .cpp files in the core directory
+    sources = [
+        os.path.join(CORE_DIR, f) 
+        for f in os.listdir(CORE_DIR) 
+        if f.endswith(".cpp") and f != "parser.cpp"
+    ]
+
     out = _output_path()
-    cmd = [compiler, "-std=c++17", SRC, "-o", out]
+    cmd = [compiler, "-std=c++17"] + sources + ["-o", out]
     print("Running:", " ".join(cmd))
     subprocess.run(cmd, check=True)
     print(f"Built: {out}")

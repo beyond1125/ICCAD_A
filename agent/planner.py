@@ -59,6 +59,12 @@ class Planner:
             "replace_gate":  engine.replace_gate,
             "count_gates":   engine.count_gates,
             "count_fanin_gates": engine.count_fanin_gates,
+            "get_fanin_depth": engine.get_fanin_depth,
+            "path_exists": engine.path_exists,
+            "get_fanout": engine.get_fanout,
+            "get_successors": engine.get_successors,
+            "get_transitive_fanin": engine.get_transitive_fanin,
+            "get_transitive_fanout": engine.get_transitive_fanout,
         }
 
     # ------------------------------------------------------------------ public
