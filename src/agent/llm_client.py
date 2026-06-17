@@ -80,6 +80,7 @@ class LLMClient:
 
     def _chat_openai(self, messages: List[Dict[str, Any]]) -> LLMResponse:
         cfg = self._config
+        logger.debug("--- [OpenAI] Sending request with %d messages ---", len(messages))
         response = self._openai_client.chat.completions.create(
             model=cfg.openai.model,
             messages=messages,
@@ -96,7 +97,12 @@ class LLMClient:
         # Build a serialisable raw_message for the conversation history.
         raw: Dict[str, Any] = {"role": "assistant", "content": msg.content}
 
+        if msg.content:
+            logger.debug("\n=== [OpenAI Thought] ===\n%s\n========================", msg.content)
+
         if finish == "tool_calls" and msg.tool_calls:
+            for tc in msg.tool_calls:
+                logger.debug("=== [OpenAI ToolCall] ===\nName: %s\nArgs: %s\n=========================", tc.function.name, tc.function.arguments)
             raw["tool_calls"] = [
                 {
                     "id": tc.id,
@@ -155,6 +161,7 @@ class LLMClient:
         if system_text:
             kwargs["system"] = system_text
 
+        logger.debug("--- [Anthropic] Sending request with %d messages ---", len(anthropic_msgs))
         response = self._anthropic_client.messages.create(**kwargs)
 
         text_parts: List[str] = []
@@ -163,9 +170,11 @@ class LLMClient:
 
         for block in response.content:
             if block.type == "text":
+                logger.debug("\n=== [Anthropic Thought] ===\n%s\n===========================", block.text)
                 text_parts.append(block.text)
                 raw_blocks.append({"type": "text", "text": block.text})
             elif block.type == "tool_use":
+                logger.debug("=== [Anthropic ToolCall] ===\nName: %s\nArgs: %s\n============================", block.name, block.input)
                 tool_calls.append(
                     ToolCall(id=block.id, name=block.name, arguments=block.input)
                 )

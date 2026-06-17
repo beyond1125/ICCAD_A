@@ -47,11 +47,20 @@ def _parse_args() -> argparse.Namespace:
         metavar="<config_file_path>",
         help="Path to the YAML configuration file",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode (print LLM CoT and Tool Calls to stderr)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
+
+    import os
+    if args.debug or os.environ.get("DEBUG") == "1":
+        logging.getLogger().setLevel(logging.DEBUG)
 
     # ── initialise subsystems ─────────────────────────────────────────────────
     try:
