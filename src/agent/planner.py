@@ -12,7 +12,10 @@ Hallucinated tool names are caught gracefully: an error message is returned
 as the tool result so the LLM can recover without crashing the process.
 """
 
+import json
 import logging
+import os
+import re
 import sys
 from typing import Any, Callable, Dict, List
 
@@ -37,12 +40,13 @@ _SYSTEM_PROMPT = (
     "for the user. IMPORTANT: Always use the exact numerical values, counts, "
     "and lists provided directly by the tool outputs. Do not attempt to "
     "re-count items or recalculate values from text lists yourself. "
-    "When a find_paths tool result contains a 'saved_to_file' field, it means "
-    "the full path list was too large to display inline and has been saved to "
+    "When a tool result contains a 'saved_to_file' field, it means "
+    "the full output was too large to fit in context and has been saved to "
     "that file. You MUST mention the file path in your response so the user "
-    "knows where to find the complete data (e.g. 'The complete list of N paths "
-    "has been saved to <file_path>.'). Always report the total_paths_found and "
-    "include a few sample paths from the result. "
+    "knows where to find the complete data. Always report the total count and "
+    "include the sample items from the result. "
+    "When a decompose/replace tool result contains 'gate_delta', use those "
+    "exact numbers to report how many gates were added and removed. "
     "Whenever a request asks you to transform the design while preserving "
     "functionality (e.g. 'make sure nothing changes functionally', 'ensure "
     "functional equivalence'), call check_equivalence after the transformation "
@@ -156,6 +160,9 @@ class Planner:
 
         Returns an informative error string on unknown or malformed tool calls
         so the LLM receives feedback and can attempt recovery.
+
+        Large results are automatically truncated and saved to a file so they
+        do not blow up the LLM context window.
         """
         fn = self._dispatch.get(tc.name)
         if fn is None:
@@ -168,7 +175,10 @@ class Planner:
 
         try:
             result = fn(**tc.arguments)
-            return str(result)
+            result = str(result)
+            # ── Tool Interceptor: truncate oversized results ──────────
+            result = self._truncate_large_result(result, tc.name, tc.arguments)
+            return result
         except TypeError as exc:
             # Wrong argument names — the LLM hallucinated a parameter.
             return (
@@ -178,3 +188,54 @@ class Planner:
         except Exception as exc:
             logger.error("Tool '%s' raised an exception: %s", tc.name, exc)
             return f"Error executing '{tc.name}': {exc}"
+
+    # ── Token-size threshold (roughly 4 chars per token) ──────────────────
+    _MAX_RESULT_CHARS = 12000  # ~3000 tokens — safe for any provider
+
+    def _truncate_large_result(
+        self, result: str, tool_name: str, arguments: Dict[str, Any]
+    ) -> str:
+        """If *result* exceeds the character budget, save it to a log file
+        and return a compact JSON summary instead.
+
+        This is a generic interceptor that protects against ANY tool returning
+        a massive string (list_nodes, get_fanin_cone, get_fanout_cone, etc.).
+        The find_paths tool has its own built-in truncation in engine.py, so
+        results that are already JSON-formatted are passed through.
+        """
+        # Skip results that are already compact JSON (e.g. from find_paths).
+        if result.lstrip().startswith("{"):
+            return result
+
+        if len(result) <= self._MAX_RESULT_CHARS:
+            return result
+
+        # ── Derive a save path ────────────────────────────────────────────
+        save_dir = None
+        if self._engine.loaded_filepath:
+            save_dir = os.path.dirname(self._engine.loaded_filepath)
+
+        # Build a descriptive filename from the tool name and arguments.
+        arg_tag = "_".join(str(v) for v in arguments.values()) if arguments else ""
+        arg_tag = re.sub(r"[\[\]/\\\s]", "_", arg_tag)[:60]
+        filename = f"{tool_name}_{arg_tag}.log" if arg_tag else f"{tool_name}.log"
+        log_path = os.path.join(save_dir, filename) if save_dir else filename
+
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(result)
+
+        # ── Build a compact summary ───────────────────────────────────────
+        lines = result.splitlines()
+        total_lines = len(lines)
+        samples = lines[:5]
+
+        summary = {
+            "notice": (
+                f"The output from '{tool_name}' is too large to fit in LLM context "
+                f"({total_lines} lines). Full details saved to {log_path}"
+            ),
+            "total_lines": total_lines,
+            "saved_to_file": log_path,
+            "samples": samples,
+        }
+        return json.dumps(summary, ensure_ascii=False, indent=2)

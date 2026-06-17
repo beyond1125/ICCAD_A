@@ -361,9 +361,17 @@ class EDAEngine:
         Currently supports replacing 2-input OR gates with NAND+NOT logic
         (OR(a,b) = NAND(!a,!b)). Functionally equivalent. Handles requests like
         'replace all 2-input OR gates in the cone of n11[0] with NAND and NOT only'.
+
+        After the replacement, the method automatically computes a gate-count
+        delta so the LLM can report exactly how many gates were added/removed.
         """
         if not self._loaded_filepath:
             return "Error: No design loaded."
+
+        # Snapshot gate counts BEFORE the transformation.
+        before_raw = self.count_gates()
+        before_counts = self._parse_gate_counts(before_raw)
+
         b = target_basis.lower()
         basis = "nand_not" if ("nand" in b and "not" in b) else b.replace(" ", "_").replace("+", "_")
         work = self._session_path("decomposed")
@@ -373,7 +381,35 @@ class EDAEngine:
         )
         if res.startswith("Replaced") and os.path.isfile(work):
             self._loaded_filepath = work
+
+            # Snapshot gate counts AFTER the transformation.
+            after_raw = self.count_gates()
+            after_counts = self._parse_gate_counts(after_raw)
+
+            # Compute delta for every gate type.
+            all_types = set(before_counts) | set(after_counts)
+            delta = {}
+            for gt in sorted(all_types):
+                diff = after_counts.get(gt, 0) - before_counts.get(gt, 0)
+                if diff != 0:
+                    delta[gt] = diff
+
+            import json
+            res += (
+                "\n\ngate_delta (after - before): "
+                + json.dumps(delta, ensure_ascii=False)
+            )
         return res
+
+    @staticmethod
+    def _parse_gate_counts(raw: str) -> Dict[str, int]:
+        """Parse 'GateType: N' lines from count_gates output into a dict."""
+        counts: Dict[str, int] = {}
+        for line in raw.splitlines():
+            m = re.match(r"\s*(\w+)\s*:\s*(\d+)", line)
+            if m:
+                counts[m.group(1).upper()] = int(m.group(2))
+        return counts
 
     def rename_node(self, old_name: str, new_name: str) -> str:
         """Rename a gate instance, wire, or signal and update all references.
