@@ -28,6 +28,7 @@ public:
     std::string get_critical_path(const std::string& start, const std::string& end);
     int count_paths(const std::string& start, const std::string& end, const std::string& avoid = "");
     std::string find_all_paths(const std::string& start, const std::string& end, const std::string& avoid = "");
+    bool check_path_exists(const std::string& start, const std::string& end, const std::string& avoid = "");
     int count_fanin_gates(const std::string& name);
     int count_fanout_gates(const std::string& name);
     std::string get_fanin_cone(const std::string& name);

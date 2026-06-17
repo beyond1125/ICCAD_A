@@ -106,10 +106,42 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "check_path_exists",
+            "description": (
+                "Determine if ANY combinational path exists from start_node to end_node, "
+                "optionally avoiding a specific intermediate node. Returns 'yes' or 'no' "
+                "immediately upon finding the first path. Use this for yes/no questions "
+                "like 'Determine whether a combinational path from X to Y exists'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start_node": {
+                        "type": "string",
+                        "description": "Source signal name or primary input.",
+                    },
+                    "end_node": {
+                        "type": "string",
+                        "description": "Sink signal name or primary output.",
+                    },
+                    "avoid_node": {
+                        "type": "string",
+                        "description": "Optional node that no returned path may pass through.",
+                    },
+                },
+                "required": ["start_node", "end_node"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "find_paths",
             "description": (
-                "Enumerate paths from start_node to end_node in the netlist, "
-                "optionally avoiding a specific intermediate node."
+                "Enumerate all paths from start_node to end_node in the netlist, "
+                "optionally avoiding a specific intermediate node. Use this only when "
+                "the user asks to 'List every path' or 'Provide a complete enumeration'. "
+                "Do NOT use this for yes/no existence checks; use check_path_exists instead."
             ),
             "parameters": {
                 "type": "object",

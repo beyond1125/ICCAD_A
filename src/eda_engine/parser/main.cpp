@@ -37,6 +37,9 @@ int main(int argc, char** argv) {
     } else if (action == "count_paths") {
         int c = g.count_paths(args["--start"], args["--end"], args["--avoid"]);
         std::cout << "Paths: " << c << std::endl;
+    } else if (action == "check_path_exists") {
+        bool exists = g.check_path_exists(args["--start"], args["--end"], args["--avoid"]);
+        std::cout << (exists ? "Path exists." : "No path exists.") << std::endl;
     } else if (action == "list_paths") {
         std::cout << g.find_all_paths(args["--start"], args["--end"], args["--avoid"]) << std::endl;
     } else if (action == "count_fanin") {

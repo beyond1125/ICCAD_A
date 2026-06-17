@@ -60,6 +60,7 @@ class Planner:
             "analyze_depth": engine.analyze_depth,
             "analyze_critical_path": engine.analyze_critical_path,
             "find_paths":    engine.find_paths,
+            "check_path_exists": engine.check_path_exists,
             "get_node_info": engine.get_node_info,
             "list_nodes":    engine.list_nodes,
             "replace_gate":  engine.replace_gate,

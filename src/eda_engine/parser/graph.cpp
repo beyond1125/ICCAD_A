@@ -223,6 +223,38 @@ std::string Graph::find_all_paths(const std::string& start, const std::string& e
     return ss.str();
 }
 
+bool Graph::check_path_exists(const std::string& start, const std::string& end, const std::string& avoid) {
+    if (nodes.find(start) == nodes.end() || nodes.find(end) == nodes.end()) return false;
+    Node* s = nodes[start];
+    Node* e = nodes[end];
+    Node* a = avoid.empty() ? nullptr : (nodes.count(avoid) ? nodes[avoid] : nullptr);
+
+    if (s == e) return true;
+    if (s == a) return false;
+
+    std::unordered_set<Node*> visited;
+    std::vector<Node*> stack;
+    stack.push_back(s);
+    visited.insert(s);
+
+    while (!stack.empty()) {
+        Node* curr = stack.back();
+        stack.pop_back();
+
+        if (curr == e) return true;
+
+        for (Node* next : curr->outputs) {
+            if (next->type == NodeType::GATE && next->gate_type == GateType::DFF) continue; // stop at DFF boundaries (D pin)
+            if (next == a) continue;
+            if (visited.find(next) == visited.end()) {
+                visited.insert(next);
+                stack.push_back(next);
+            }
+        }
+    }
+    return false;
+}
+
 int Graph::count_fanin_gates(const std::string& name) {
     if (nodes.find(name) == nodes.end()) return 0;
     std::unordered_set<Node*> visited;

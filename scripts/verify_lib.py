@@ -201,6 +201,7 @@ def available_engine_tools(engine: Any) -> List[str]:
         "analyze_depth",
         "analyze_critical_path",
         "find_paths",
+        "check_path_exists",
         "get_node_info",
         "list_nodes",
         "replace_gate",
@@ -257,19 +258,30 @@ def _extract_depth_args(text: str) -> Dict[str, str]:
         return {"end_node": m2.group(1)}
     return {}
 
-
 def _extract_path_avoid(text: str) -> Dict[str, str]:
-    m = re.search(
-        r"from\s+(\S+)\s+to\s+(\S+).*?(?:avoid|traverse|travers)\w*\s+(?:node\s+)?(\S+)",
-        text,
-        re.I,
-    )
-    if m:
-        return {
-            "start_node": m.group(1),
-            "end_node": m.group(2),
-            "avoid_node": m.group(3).rstrip("."),
-        }
+    m1 = re.search(r"from\s+(?:input\s+)?([\w\[\]]+)\s+to\s+(?:output\s+)?([\w\[\]]+)", text, re.I)
+    m2 = re.search(r"between\s+(?:input\s+)?([\w\[\]]+)\s+and\s+(?:output\s+)?([\w\[\]]+)", text, re.I)
+    m3 = re.search(r"connecting\s+(?:input\s+)?([\w\[\]]+)\s+to\s+(?:output\s+)?([\w\[\]]+)", text, re.I)
+    m4 = re.search(r"originating at\s+(?:primary input\s+)?([\w\[\]]+)\s+and terminating at\s+(?:primary output\s+)?([\w\[\]]+)", text, re.I)
+
+    res = {}
+    if m1:
+        res["start_node"] = m1.group(1)
+        res["end_node"] = m1.group(2)
+    elif m2:
+        res["start_node"] = m2.group(1)
+        res["end_node"] = m2.group(2)
+    elif m3:
+        res["start_node"] = m3.group(1)
+        res["end_node"] = m3.group(2)
+    elif m4:
+        res["start_node"] = m4.group(1)
+        res["end_node"] = m4.group(2)
+
+    av = re.search(r"(?:avoiding|not traverse node)\s+([\w\[\]]+)", text, re.I)
+    if av:
+        res["avoid_node"] = av.group(1)
+    return res
     m2 = re.search(r"from\s+(\S+)\s+to\s+(\S+)", text, re.I)
     if m2:
         return {"start_node": m2.group(1), "end_node": m2.group(2)}
@@ -343,7 +355,7 @@ def dispatch_prompt(
             return ToolCallSpec("get_fanout_cone", {"node_name": node}), ""
         return None, "get_fanout_cone not available"
 
-    if re.search(r"list every path|every path originating", text, re.I):
+    if re.search(r"list every path|every path originating|enumeration of paths between", text, re.I):
         args = _extract_path_avoid(text)
         if args.get("start_node") and args.get("end_node") and "find_paths" in tools:
             return ToolCallSpec("find_paths", args), ""
@@ -351,9 +363,9 @@ def dispatch_prompt(
 
     if re.search(r"path.*exist|whether a combinational path|verify whether a path", text, re.I):
         args = _extract_path_avoid(text)
-        if args.get("start_node") and args.get("end_node") and "find_paths" in tools:
-            return ToolCallSpec("find_paths", args), ""
-        return None, "find_paths not available or path endpoints not parsed"
+        if args.get("start_node") and args.get("end_node") and "check_path_exists" in tools:
+            return ToolCallSpec("check_path_exists", args), ""
+        return None, "check_path_exists not available or path endpoints not parsed"
 
     if re.search(r"\bdepth\b|\blogic depth\b|\bcritical path\b", text, re.I):
         args = _extract_depth_args(text)

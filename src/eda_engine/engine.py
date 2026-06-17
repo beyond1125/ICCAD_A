@@ -157,6 +157,19 @@ class EDAEngine:
         """Analyze the critical path between two nodes, returning depth and nodes."""
         return self._run_action("get_critical_path", start=start_node, end=end_node)
 
+    def check_path_exists(
+        self, start_node: str, end_node: str, avoid_node: Optional[str] = None
+    ) -> str:
+        """Check if any combinational path exists between two nodes."""
+        res = self._run_action(
+            "check_path_exists", start=start_node, end=end_node, avoid=avoid_node or ""
+        )
+        if "Path exists" in res:
+            return f"Yes, a combinational path from {start_node} to {end_node} exists."
+        elif "No path" in res:
+            return f"No, a combinational path from {start_node} to {end_node} does not exist."
+        return res
+
     def find_paths(
         self, start_node: str, end_node: str, avoid_node: Optional[str] = None
     ) -> str:
