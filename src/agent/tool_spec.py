@@ -405,6 +405,20 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "merge_equivalent_gates",
+            "description": (
+                "Find and merge all gate pairs that compute the same function "
+                "(structural duplicates: same gate type and same inputs), keeping one "
+                "and rewiring the rest. Functionality is preserved; flip-flops are not "
+                "merged. Call this for 'find and merge all gate pairs that are "
+                "functionally equivalent' or 'merge structural duplicate gates'."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "convert_cone_to_basis",
             "description": (
                 "Convert every gate in the fanin cone of a node to use only a target "

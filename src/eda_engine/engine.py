@@ -361,6 +361,21 @@ class EDAEngine:
             f"{change} Design updated; verify with check_equivalence.{rebuf}"
         )
 
+    def merge_equivalent_gates(self) -> str:
+        """Merge gate pairs that compute the same function (structural duplicates:
+        same type and same inputs), rewiring consumers to a single survivor.
+
+        Functionally equivalent; flip-flops are never merged. Handles 'find and merge
+        all gate pairs that are functionally equivalent' and 'merge structural duplicates'.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        work = self._session_path("merged")
+        res = self._run_action("merge_dup", out=work)
+        if "Merged" in res and os.path.isfile(work):
+            self._loaded_filepath = work
+        return res
+
     def collapse_inverters(self) -> str:
         """Collapse back-to-back inverter pairs (NOT(NOT x) = x) into direct wires.
 

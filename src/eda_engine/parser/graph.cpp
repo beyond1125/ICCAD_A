@@ -641,6 +641,60 @@ std::string Graph::outputs_over_depth(int max_depth) {
     return ss.str();
 }
 
+// Merge structurally-equivalent gates: two non-DFF gates with the same type and the
+// same input nets compute the same function, so one is removed and its consumers are
+// rewired to the survivor. Iterates to a fixpoint (merging an input can expose new
+// duplicates). Flip-flops are never merged, so the flop boundary (and flop-cut
+// equivalence) is preserved. Returns the number of gates merged away.
+int Graph::merge_duplicate_gates() {
+    int merged = 0; bool changed = true;
+    auto rm = [&](std::vector<Node*>& v, Node* x) { v.erase(std::remove(v.begin(), v.end(), x), v.end()); };
+    while (changed) {
+        changed = false;
+        std::unordered_map<std::string, Node*> seen;   // signature -> survivor gate
+        std::unordered_set<Node*> dead;
+        std::vector<Node*> snap;
+        for (Node* n : all_nodes)
+            if (n->type == NodeType::GATE && n->gate_type != GateType::DFF) snap.push_back(n);
+        for (Node* g : snap) {
+            if (dead.count(g) || g->outputs.empty()) continue;
+            std::vector<std::string> ins;
+            for (Node* i : g->inputs) ins.push_back(i->name);
+            std::sort(ins.begin(), ins.end());          // commutative: order-independent
+            std::string sig = std::to_string((int)g->gate_type);
+            for (auto& s : ins) sig += "|" + s;
+
+            auto it = seen.find(sig);
+            if (it == seen.end()) { seen[sig] = g; continue; }
+            Node* canon = it->second;
+            Node* o_dup = g->outputs[0]; Node* o_canon = canon->outputs[0];
+            if (o_dup->type == NodeType::PRIMARY_OUTPUT || o_dup == o_canon) continue;
+            for (Node* c : std::vector<Node*>(o_dup->outputs)) {
+                for (Node*& in : c->inputs) if (in == o_dup) in = o_canon;
+                o_canon->outputs.push_back(c);
+            }
+            o_dup->outputs.clear();
+            for (Node* i : g->inputs) rm(i->outputs, g);
+            dead.insert(g); dead.insert(o_dup);
+            ++merged; changed = true;
+        }
+        if (!dead.empty()) {
+            std::vector<Node*> keep, drop;
+            for (Node* n : all_nodes) (dead.count(n) ? drop : keep).push_back(n);
+            for (Node* n : keep) {
+                std::vector<Node*> in, out;
+                for (Node* x : n->inputs)  if (!dead.count(x)) in.push_back(x);
+                for (Node* x : n->outputs) if (!dead.count(x)) out.push_back(x);
+                n->inputs.swap(in); n->outputs.swap(out);
+            }
+            for (Node* n : drop) nodes.erase(n->name);
+            all_nodes.swap(keep);
+            for (Node* n : drop) delete n;
+        }
+    }
+    return merged;
+}
+
 // Collapse back-to-back inverters: NOT(NOT(x)) == x. g2's consumers are rewired to
 // x and g2 removed; g1 removed too if it then drives nothing. Iterates to fully
 // collapse chains. A pair feeding a primary output is left intact. Returns count removed.

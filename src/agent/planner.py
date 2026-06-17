@@ -81,6 +81,7 @@ class Planner:
             "rename_node": engine.rename_node,
             "decompose_gates_in_cone": engine.decompose_gates_in_cone,
             "collapse_inverters": engine.collapse_inverters,
+            "merge_equivalent_gates": engine.merge_equivalent_gates,
             "convert_cone_to_basis": engine.convert_cone_to_basis,
             "reconstruct_netlist_to_basis": engine.reconstruct_netlist_to_basis,
             "restructure_to_depth": engine.restructure_to_depth,
