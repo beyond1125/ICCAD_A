@@ -688,20 +688,31 @@ int Graph::collapse_inverters() {
     return removed;
 }
 
-// Convert every gate in the fanin cone of `root` to use only the given basis.
-// Supports NOR+NOT: AND(a,b)=NOR(!a,!b), OR(a,b)=NOT(NOR(a,b)), NAND(a,b)=
-// NOT(NOR(!a,!b)), BUF(a)=NOT(!a); NOT/NOR are already in the basis. Inverters are
-// shared. Returns the number of gates rewritten, or -1 for an unsupported basis.
+// Convert gates to use only a target basis. If `root` is empty the whole netlist
+// is processed; otherwise just the fanin cone of `root`. Supports:
+//   nor_not: AND=NOR(!a,!b), OR=NOT(NOR(a,b)), NAND=NOT(NOR(!a,!b)), BUF=NOT(!a), …
+//   and_not: NOR=AND(!a,!b), NAND=NOT(AND(a,b)), OR=NOT(AND(!a,!b)), BUF=NOT(!a), …
+// XOR/XNOR are decomposed into the basis; inverters are shared. NOT and the basis's
+// kept gate stay as-is. Returns the number of gates rewritten, or -1 if unsupported.
 int Graph::remap_cone_to_basis(const std::string& root, const std::string& basis) {
-    if (basis != "nor_not") return -1;
-    auto cone = fanin_cone_gates(root);
-    std::vector<Node*> targets;
-    for (Node* g : cone) {
-        GateType t = g->gate_type;
-        if (t == GateType::AND || t == GateType::OR || t == GateType::NAND || t == GateType::BUF ||
-            t == GateType::XOR || t == GateType::XNOR)
-            targets.push_back(g);
+    bool nor_b = (basis == "nor_not"), and_b = (basis == "and_not");
+    if (!nor_b && !and_b) return -1;
+
+    std::vector<Node*> scope;
+    if (root.empty()) {
+        for (Node* n : all_nodes)
+            if (n->type == NodeType::GATE && n->gate_type != GateType::DFF) scope.push_back(n);
+    } else {
+        auto cone = fanin_cone_gates(root);
+        scope.assign(cone.begin(), cone.end());
     }
+    std::vector<Node*> targets;
+    for (Node* g : scope) {
+        GateType t = g->gate_type;
+        bool kept = (t == GateType::NOT) || (nor_b && t == GateType::NOR) || (and_b && t == GateType::AND);
+        if (!kept && t != GateType::DFF && t != GateType::UNKNOWN) targets.push_back(g);
+    }
+
     int ctr = 0;
     auto fresh = [&](const std::string& p) { std::string nm; do { nm = p + std::to_string(ctr++); } while (nodes.count(nm)); return nm; };
     auto rm = [&](std::vector<Node*>& v, Node* x) { v.erase(std::remove(v.begin(), v.end(), x), v.end()); };
@@ -712,31 +723,42 @@ int Graph::remap_cone_to_basis(const std::string& root, const std::string& basis
         Node* o = get_or_create_node(fresh("__rm_n")); add_edge(x, gg); add_edge(gg, o);
         inv_cache[x] = o; return o;
     };
-    auto mknor = [&](Node* a, Node* b) -> Node* {
-        Node* gg = get_or_create_node(fresh("__rm_g"), NodeType::GATE); gg->gate_type = GateType::NOR;
+    auto mk2 = [&](GateType ty, Node* a, Node* b) -> Node* {
+        Node* gg = get_or_create_node(fresh("__rm_g"), NodeType::GATE); gg->gate_type = ty;
         Node* o = get_or_create_node(fresh("__rm_n")); add_edge(a, gg); add_edge(b, gg); add_edge(gg, o);
         return o;
     };
+
     for (Node* g : targets) {
         GateType t = g->gate_type;
         Node* a = g->inputs[0]; Node* b = (g->inputs.size() > 1 ? g->inputs[1] : nullptr);
         rm(a->outputs, g); if (b) rm(b->outputs, g); g->inputs.clear();
-        if (t == GateType::AND) {
-            add_edge(inv(a), g); add_edge(inv(b), g); g->gate_type = GateType::NOR;
-        } else if (t == GateType::BUF) {
+        if (t == GateType::BUF) {                          // BUF = NOT(!a) in both bases
             add_edge(inv(a), g); g->gate_type = GateType::NOT;
-        } else if (t == GateType::OR) {
-            add_edge(mknor(a, b), g); g->gate_type = GateType::NOT;
-        } else if (t == GateType::NAND) {
-            add_edge(mknor(inv(a), inv(b)), g); g->gate_type = GateType::NOT;
-        } else if (t == GateType::XOR) {       // XOR = NOT(XNOR), XNOR = NOR(a&!b, !a&b)
-            Node* p = mknor(inv(a), b);        // a & !b
-            Node* q = mknor(a, inv(b));        // !a & b
-            add_edge(mknor(p, q), g); g->gate_type = GateType::NOT;
-        } else if (t == GateType::XNOR) {
-            Node* p = mknor(inv(a), b);
-            Node* q = mknor(a, inv(b));
-            add_edge(p, g); add_edge(q, g); g->gate_type = GateType::NOR;
+            continue;
+        }
+        if (nor_b) {
+            if (t == GateType::AND) { add_edge(inv(a), g); add_edge(inv(b), g); g->gate_type = GateType::NOR; }
+            else if (t == GateType::OR) { add_edge(mk2(GateType::NOR, a, b), g); g->gate_type = GateType::NOT; }
+            else if (t == GateType::NAND) { add_edge(mk2(GateType::NOR, inv(a), inv(b)), g); g->gate_type = GateType::NOT; }
+            else if (t == GateType::XOR) {                 // XNOR = NOR(a&!b, !a&b); XOR = NOT(XNOR)
+                Node* p = mk2(GateType::NOR, inv(a), b), * q = mk2(GateType::NOR, a, inv(b));
+                add_edge(mk2(GateType::NOR, p, q), g); g->gate_type = GateType::NOT;
+            } else if (t == GateType::XNOR) {
+                Node* p = mk2(GateType::NOR, inv(a), b), * q = mk2(GateType::NOR, a, inv(b));
+                add_edge(p, g); add_edge(q, g); g->gate_type = GateType::NOR;
+            }
+        } else {  // and_not
+            if (t == GateType::NOR) { add_edge(inv(a), g); add_edge(inv(b), g); g->gate_type = GateType::AND; }
+            else if (t == GateType::NAND) { add_edge(mk2(GateType::AND, a, b), g); g->gate_type = GateType::NOT; }
+            else if (t == GateType::OR) { add_edge(mk2(GateType::AND, inv(a), inv(b)), g); g->gate_type = GateType::NOT; }
+            else if (t == GateType::XOR) {                 // XOR = NOT(AND(!(a&!b), !(!a&b)))
+                Node* p = inv(mk2(GateType::AND, a, inv(b))), * q = inv(mk2(GateType::AND, inv(a), b));
+                add_edge(mk2(GateType::AND, p, q), g); g->gate_type = GateType::NOT;
+            } else if (t == GateType::XNOR) {              // XNOR = AND(!(a&!b), !(!a&b))
+                Node* p = inv(mk2(GateType::AND, a, inv(b))), * q = inv(mk2(GateType::AND, inv(a), b));
+                add_edge(p, g); add_edge(q, g); g->gate_type = GateType::AND;
+            }
         }
     }
     return (int)targets.size();

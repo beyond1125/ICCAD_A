@@ -98,6 +98,15 @@ int main(int argc, char** argv) {
         if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
         std::cout << "Collapsed " << n << " redundant inverter(s) from back-to-back pairs."
                   << std::endl;
+    } else if (action == "remap_all") {
+        int n = g.remap_cone_to_basis("", args["--basis"]);
+        if (n < 0) {
+            std::cout << "Failure: unsupported basis '" << args["--basis"] << "'." << std::endl;
+        } else {
+            if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
+            std::cout << "Reconstructed the netlist: converted " << n << " gate(s) to "
+                      << args["--basis"] << " logic." << std::endl;
+        }
     } else if (action == "remap_cone") {
         int n = g.remap_cone_to_basis(args["--root"], args["--basis"]);
         if (n < 0) {

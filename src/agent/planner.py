@@ -82,6 +82,7 @@ class Planner:
             "decompose_gates_in_cone": engine.decompose_gates_in_cone,
             "collapse_inverters": engine.collapse_inverters,
             "convert_cone_to_basis": engine.convert_cone_to_basis,
+            "reconstruct_netlist_to_basis": engine.reconstruct_netlist_to_basis,
             "restructure_to_depth": engine.restructure_to_depth,
             "optimize_outputs_to_depth": engine.optimize_outputs_to_depth,
             "check_equivalence": engine.check_equivalence,

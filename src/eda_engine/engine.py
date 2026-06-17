@@ -390,6 +390,29 @@ class EDAEngine:
             self._loaded_filepath = work
         return res
 
+    def reconstruct_netlist_to_basis(self, target_basis: str) -> str:
+        """Reconstruct the entire netlist using only a target gate basis.
+
+        Supports AND+NOT and NOR+NOT. Functionally equivalent. Handles requests like
+        'reconstruct the entire netlist using only AND and NOT gates'.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        b = target_basis.lower()
+        if "nand" in b and "not" in b:
+            basis = "nand_not"
+        elif "nor" in b and "not" in b:
+            basis = "nor_not"
+        elif "and" in b and "not" in b:
+            basis = "and_not"
+        else:
+            basis = re.sub(r"[^a-z]+", "_", b).strip("_")
+        work = self._session_path("reconstructed")
+        res = self._run_action("remap_all", basis=basis, out=work)
+        if res.startswith("Reconstructed") and os.path.isfile(work):
+            self._loaded_filepath = work
+        return res
+
     def restructure_to_depth(self, node: str, target_depth: int) -> str:
         """Best-effort report of a node's cone depth against a target depth.
 

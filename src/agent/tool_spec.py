@@ -424,6 +424,25 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "reconstruct_netlist_to_basis",
+            "description": (
+                "Reconstruct the ENTIRE netlist using only a target gate basis "
+                "(AND+NOT or NOR+NOT), preserving functionality. Call this for "
+                "'reconstruct the entire netlist using only AND and NOT gates'. For a "
+                "single node's cone, use convert_cone_to_basis instead."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_basis": {"type": "string", "description": "Basis, e.g. 'AND_NOT' or 'NOR_NOT'."},
+                },
+                "required": ["target_basis"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "restructure_to_depth",
             "description": (
                 "Best-effort attempt to restructure a node's logic cone to a target "
