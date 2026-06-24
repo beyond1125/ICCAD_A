@@ -722,6 +722,239 @@ int Graph::merge_duplicate_gates() {
     return merged;
 }
 
+// Detect and simplify gates with constant inputs (1'b0, 1'b1). Supports
+// report (scan only) and propagate (simplify with cascading fixpoint) modes.
+std::string Graph::const_propagate(const std::string& mode,
+                                    const std::string& gate_type_filter,
+                                    const std::string& const_value_filter) {
+    auto parse_const = [](const std::string& name) -> std::pair<bool, int> {
+        if (name == "1'b0") return {true, 0};
+        if (name == "1'b1") return {true, 1};
+        return {false, -1};
+    };
+
+    std::unordered_map<Node*, int> const_map;
+    for (auto& p : nodes) {
+        auto r = parse_const(p.first);
+        if (r.first) const_map[p.second] = r.second;
+    }
+
+    GateType gt_filt = GateType::UNKNOWN;
+    if (!gate_type_filter.empty()) {
+        std::string lf = gate_type_filter;
+        for (char& c : lf) c = std::tolower(c);
+        gt_filt = string_to_gate_type(lf);
+    }
+    int cv_filt = -1;
+    if (!const_value_filter.empty()) cv_filt = std::stoi(const_value_filter);
+
+    struct CIG { Node* gate; Node* ci; Node* oi; int cv; };
+    auto scan = [&]() -> std::vector<CIG> {
+        std::vector<CIG> res;
+        for (Node* n : all_nodes) {
+            if (n->type != NodeType::GATE || n->gate_type == GateType::DFF) continue;
+            if (gt_filt != GateType::UNKNOWN && n->gate_type != gt_filt) continue;
+            bool is_unary = (n->gate_type == GateType::NOT || n->gate_type == GateType::BUF);
+            if (is_unary) { if (n->inputs.size() != 1) continue; }
+            else { if (n->inputs.size() != 2) continue; }
+
+            Node* ci = nullptr; int cv = -1;
+            for (Node* in : n->inputs) {
+                auto it = const_map.find(in);
+                if (it != const_map.end()) {
+                    if (cv_filt >= 0 && it->second != cv_filt) continue;
+                    if (!ci) { ci = in; cv = it->second; }
+                }
+            }
+            if (!ci) continue;
+            Node* oi = nullptr;
+            for (Node* in : n->inputs) if (in != ci) { oi = in; break; }
+            res.push_back({n, ci, oi, cv});
+        }
+        return res;
+    };
+
+    // ── Report mode ──
+    if (mode == "report") {
+        auto cgs = scan();
+        std::ostringstream ss;
+        ss << "{\"mode\": \"report\", \"const_gates\": [";
+        for (size_t i = 0; i < cgs.size(); ++i) {
+            if (i) ss << ", ";
+            auto& c = cgs[i];
+            ss << "{\"name\": \"" << c.gate->name << "\", \"type\": \""
+               << gate_type_to_string(c.gate->gate_type) << "\", \"inputs\": [";
+            for (size_t j = 0; j < c.gate->inputs.size(); ++j) {
+                if (j) ss << ", ";
+                ss << "\"" << c.gate->inputs[j]->name << "\"";
+            }
+            ss << "], \"const_input\": \"" << c.ci->name
+               << "\", \"const_value\": " << c.cv << "}";
+        }
+        ss << "], \"total_found\": " << cgs.size() << "}";
+        return ss.str();
+    }
+
+    // ── Propagate mode ──
+    struct EI { std::string name, old_type, action, new_gate; std::vector<std::string> old_in, new_in; };
+    std::vector<EI> elims;
+    std::unordered_map<std::string, int> gdelta;
+    std::unordered_set<Node*> dead;
+    auto rmv = [](std::vector<Node*>& v, Node* x) { v.erase(std::remove(v.begin(), v.end(), x), v.end()); };
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        auto cgs = scan();
+        for (auto& cg : cgs) {
+            if (dead.count(cg.gate)) continue;
+            Node* g = cg.gate; Node* ci = cg.ci; Node* oi = cg.oi; int cv = cg.cv;
+            GateType gt = g->gate_type;
+            if (g->outputs.empty()) continue;
+            Node* out = g->outputs[0];
+
+            if (gt == GateType::BUF && out->type == NodeType::PRIMARY_OUTPUT) continue;
+
+            EI ei; ei.name = g->name; ei.old_type = gate_type_to_string(gt);
+            for (Node* in : g->inputs) ei.old_in.push_back(in->name);
+
+            enum { TNOT, TWIRE, TCONST } act; int coval = -1;
+            switch (gt) {
+                case GateType::NOT:  act = TCONST; coval = 1 - cv; break;
+                case GateType::BUF:  act = TCONST; coval = cv; break;
+                case GateType::NAND: act = cv ? TNOT : TCONST; coval = 1; break;
+                case GateType::AND:  act = cv ? TWIRE : TCONST; coval = 0; break;
+                case GateType::OR:   act = cv ? TCONST : TWIRE; coval = 1; break;
+                case GateType::NOR:  act = cv ? TCONST : TNOT; coval = 0; break;
+                case GateType::XOR:  act = cv ? TNOT : TWIRE; break;
+                case GateType::XNOR: act = cv ? TWIRE : TNOT; break;
+                default: continue;
+            }
+
+            if ((act == TNOT || act == TWIRE) && !oi) {
+                int c = cv;
+                switch (gt) {
+                    case GateType::NAND: coval = c ? 0 : 1; break;
+                    case GateType::AND:  coval = c; break;
+                    case GateType::OR:   coval = c; break;
+                    case GateType::NOR:  coval = c ? 0 : 1; break;
+                    case GateType::XOR:  coval = 0; break;
+                    case GateType::XNOR: coval = 1; break;
+                    default: break;
+                }
+                act = TCONST;
+            }
+
+            if (act == TNOT) {
+                rmv(ci->outputs, g); g->inputs.clear();
+                g->inputs.push_back(oi);
+                g->gate_type = GateType::NOT;
+                ei.action = "replaced_with_NOT"; ei.new_gate = g->name;
+                for (Node* in : g->inputs) ei.new_in.push_back(in->name);
+                gdelta[ei.old_type]--; gdelta["NOT"]++;
+            } else if (act == TWIRE) {
+                if (out->type == NodeType::PRIMARY_OUTPUT) {
+                    rmv(ci->outputs, g); g->inputs.clear(); g->inputs.push_back(oi);
+                    g->gate_type = GateType::BUF;
+                    ei.action = "replaced_with_BUF"; ei.new_gate = g->name;
+                    ei.new_in.push_back(oi->name);
+                    gdelta[ei.old_type]--; gdelta["BUF"]++;
+                } else {
+                    for (Node* c : std::vector<Node*>(out->outputs)) {
+                        for (Node*& inp : c->inputs) if (inp == out) inp = oi;
+                        oi->outputs.push_back(c);
+                    }
+                    out->outputs.clear();
+                    for (Node* in : g->inputs) rmv(in->outputs, g);
+                    dead.insert(g); dead.insert(out);
+                    ei.action = "replaced_with_wire";
+                    gdelta[ei.old_type]--;
+                }
+            } else {
+                std::string cn = (coval == 0) ? "1'b0" : "1'b1";
+                Node* cnode = get_or_create_node(cn);
+                const_map[cnode] = coval;
+                if (out->type == NodeType::PRIMARY_OUTPUT) {
+                    for (Node* in : g->inputs) rmv(in->outputs, g);
+                    g->inputs.clear(); g->inputs.push_back(cnode); cnode->outputs.push_back(g);
+                    g->gate_type = GateType::BUF;
+                    ei.action = "output_const_" + std::to_string(coval);
+                    ei.new_gate = g->name; ei.new_in.push_back(cn);
+                    gdelta[ei.old_type]--; gdelta["BUF"]++;
+                } else {
+                    for (Node* c : std::vector<Node*>(out->outputs)) {
+                        for (Node*& inp : c->inputs) if (inp == out) inp = cnode;
+                        cnode->outputs.push_back(c);
+                    }
+                    out->outputs.clear();
+                    for (Node* in : g->inputs) rmv(in->outputs, g);
+                    dead.insert(g); dead.insert(out);
+                    ei.action = "output_const_" + std::to_string(coval);
+                    gdelta[ei.old_type]--;
+                }
+            }
+            elims.push_back(ei); changed = true;
+        }
+    }
+
+    if (!dead.empty()) {
+        std::vector<Node*> keep, drop;
+        for (Node* n : all_nodes) (dead.count(n) ? drop : keep).push_back(n);
+        for (Node* n : keep) {
+            std::vector<Node*> in, out;
+            for (Node* x : n->inputs)  if (!dead.count(x)) in.push_back(x);
+            for (Node* x : n->outputs) if (!dead.count(x)) out.push_back(x);
+            n->inputs.swap(in); n->outputs.swap(out);
+        }
+        for (Node* n : drop) nodes.erase(n->name);
+        all_nodes.swap(keep);
+        for (Node* n : drop) delete n;
+    }
+    topological_order.clear();
+
+    int rem_cw = 0;
+    for (auto& p : const_map)
+        if (!dead.count(p.first) && p.first->outputs.empty() && p.first->type == NodeType::SIGNAL) rem_cw++;
+
+    int ec = (int)elims.size(), ac = 0;
+    for (auto& e : elims) if (!e.new_gate.empty()) ac++;
+
+    std::ostringstream ss;
+    ss << "{\"mode\": \"propagate\", \"eliminated\": [";
+    for (size_t i = 0; i < elims.size(); ++i) {
+        if (i) ss << ", ";
+        auto& e = elims[i];
+        ss << "{\"name\": \"" << e.name << "\", \"old_type\": \"" << e.old_type
+           << "\", \"old_inputs\": [";
+        for (size_t j = 0; j < e.old_in.size(); ++j) {
+            if (j) ss << ", "; ss << "\"" << e.old_in[j] << "\"";
+        }
+        ss << "], \"action\": \"" << e.action << "\"";
+        if (!e.new_gate.empty()) {
+            ss << ", \"new_gate\": \"" << e.new_gate << "\", \"new_inputs\": [";
+            for (size_t j = 0; j < e.new_in.size(); ++j) {
+                if (j) ss << ", "; ss << "\"" << e.new_in[j] << "\"";
+            }
+            ss << "]";
+        }
+        ss << "}";
+    }
+    ss << "], \"eliminated_count\": " << ec
+       << ", \"added_count\": " << ac
+       << ", \"gate_delta\": {";
+    bool first = true;
+    for (auto& p : gdelta) {
+        if (!first) ss << ", "; first = false;
+        ss << "\"" << p.first << "\": " << p.second;
+    }
+    if (rem_cw > 0) {
+        if (!first) ss << ", ";
+        ss << "\"removed_const_wires\": " << rem_cw;
+    }
+    ss << "}}";
+    return ss.str();
+}
+
 // Collapse back-to-back inverters: NOT(NOT(x)) == x. g2's consumers are rewired to
 // x and g2 removed; g1 removed too if it then drives nothing. Iterates to fully
 // collapse chains. A pair feeding a primary output is left intact. Returns count removed.
@@ -880,3 +1113,144 @@ void Graph::get_cone_recursive(Node* curr, std::unordered_set<Node*>& visited, b
     const auto& next_nodes = backward ? curr->inputs : curr->outputs;
     for (auto next : next_nodes) get_cone_recursive(next, visited, backward);
 }
+
+// ── list_pio: JSON-formatted PI/PO listing with vector grouping ─────────────
+std::string Graph::list_pio() {
+    // Collect PIs and POs
+    std::vector<Node*> pis, pos;
+    for (Node* n : all_nodes) {
+        if (n->type == NodeType::PRIMARY_INPUT) pis.push_back(n);
+        else if (n->type == NodeType::PRIMARY_OUTPUT) pos.push_back(n);
+    }
+    // Sort for deterministic output
+    auto cmp = [](Node* a, Node* b) { return a->name < b->name; };
+    std::sort(pis.begin(), pis.end(), cmp);
+    std::sort(pos.begin(), pos.end(), cmp);
+
+    // Detect vector groupings: names like "data[0]", "data[1]" share base "data"
+    // Returns: ordered list of { base, vector<bit_name> }
+    struct VecInfo { std::string base; int width; std::vector<std::string> bits; };
+    auto group_vectors = [](const std::vector<Node*>& nodes) -> std::pair<std::vector<VecInfo>, std::vector<std::string>> {
+        std::unordered_map<std::string, std::vector<std::string>> base_map;
+        std::vector<std::string> scalars;
+        std::vector<std::string> order;  // track first-seen order of bases
+        std::unordered_set<std::string> seen;
+        for (Node* n : nodes) {
+            size_t br = n->name.find('[');
+            if (br != std::string::npos) {
+                std::string base = n->name.substr(0, br);
+                if (seen.insert(base).second) order.push_back(base);
+                base_map[base].push_back(n->name);
+            } else {
+                scalars.push_back(n->name);
+            }
+        }
+        std::vector<VecInfo> vecs;
+        for (const std::string& base : order) {
+            auto& bits = base_map[base];
+            std::sort(bits.begin(), bits.end());
+            vecs.push_back({base, (int)bits.size(), bits});
+        }
+        return {vecs, scalars};
+    };
+
+    auto [pi_vecs, pi_scalars] = group_vectors(pis);
+    auto [po_vecs, po_scalars] = group_vectors(pos);
+
+    // Build JSON manually (no external JSON lib)
+    std::ostringstream ss;
+    ss << "{\n";
+
+    // primary_inputs array
+    ss << "  \"primary_inputs\": [";
+    bool first = true;
+    for (Node* n : pis) {
+        if (!first) ss << ", ";
+        ss << "{\"name\": \"" << n->name << "\", \"width\": 1}";
+        first = false;
+    }
+    ss << "],\n";
+
+    // primary_outputs array
+    ss << "  \"primary_outputs\": [";
+    first = true;
+    for (Node* n : pos) {
+        if (!first) ss << ", ";
+        ss << "{\"name\": \"" << n->name << "\", \"width\": 1}";
+        first = false;
+    }
+    ss << "],\n";
+
+    // pi_vectors
+    ss << "  \"pi_vectors\": [";
+    first = true;
+    for (auto& v : pi_vecs) {
+        if (!first) ss << ", ";
+        ss << "{\"base\": \"" << v.base << "\", \"width\": " << v.width << ", \"bits\": [";
+        for (int i = 0; i < (int)v.bits.size(); ++i) {
+            if (i) ss << ", ";
+            ss << "\"" << v.bits[i] << "\"";
+        }
+        ss << "]}";
+        first = false;
+    }
+    ss << "],\n";
+
+    // po_vectors
+    ss << "  \"po_vectors\": [";
+    first = true;
+    for (auto& v : po_vecs) {
+        if (!first) ss << ", ";
+        ss << "{\"base\": \"" << v.base << "\", \"width\": " << v.width << ", \"bits\": [";
+        for (int i = 0; i < (int)v.bits.size(); ++i) {
+            if (i) ss << ", ";
+            ss << "\"" << v.bits[i] << "\"";
+        }
+        ss << "]}";
+        first = false;
+    }
+    ss << "],\n";
+
+    ss << "  \"pi_count\": " << pis.size() << ",\n";
+    ss << "  \"po_count\": " << pos.size() << "\n";
+    ss << "}";
+    return ss.str();
+}
+
+// ── deepest_cone_output: find PO with deepest fanin cone ────────────────────
+// Reuses compute_levels() (one global levelization pass) to get depth for all POs.
+// Returns JSON with the deepest output and all depths sorted descending.
+std::string Graph::deepest_cone_output() {
+    auto levels = compute_levels(nullptr);
+
+    struct PoDepth { std::string name; int depth; };
+    std::vector<PoDepth> all_po;
+    for (Node* n : all_nodes) {
+        if (n->type == NodeType::PRIMARY_OUTPUT) {
+            int d = levels.count(n) ? levels[n] : 0;
+            all_po.push_back({n->name, d});
+        }
+    }
+    // Sort by depth descending, then name ascending for ties
+    std::sort(all_po.begin(), all_po.end(), [](const PoDepth& a, const PoDepth& b) {
+        return a.depth != b.depth ? a.depth > b.depth : a.name < b.name;
+    });
+
+    std::string deepest_name = all_po.empty() ? "" : all_po[0].name;
+    int deepest_depth = all_po.empty() ? 0 : all_po[0].depth;
+
+    std::ostringstream ss;
+    ss << "{\n";
+    ss << "  \"deepest_output\": \"" << deepest_name << "\",\n";
+    ss << "  \"depth\": " << deepest_depth << ",\n";
+    ss << "  \"total_outputs\": " << all_po.size() << ",\n";
+    ss << "  \"all_depths\": [";
+    for (int i = 0; i < (int)all_po.size(); ++i) {
+        if (i) ss << ", ";
+        ss << "{\"name\": \"" << all_po[i].name << "\", \"depth\": " << all_po[i].depth << "}";
+    }
+    ss << "]\n";
+    ss << "}";
+    return ss.str();
+}
+

@@ -62,7 +62,7 @@ std::vector<std::string> VerilogParser::expand_bus(const std::string& base, int 
 
 std::vector<std::string> VerilogParser::parse_signal_list(const std::string& list_str) {
     std::vector<std::string> signals;
-    static const std::regex sig_regex(R"(\w+(?:\[\d+(?::\d+)?\])?)");
+    static const std::regex sig_regex(R"(\d+'[bBhHoOdD]\w+|\w+(?:\[\d+(?::\d+)?\])?)");
     auto words_begin = std::sregex_iterator(list_str.begin(), list_str.end(), sig_regex);
     auto words_end = std::sregex_iterator();
     for (std::sregex_iterator i = words_begin; i != words_end; ++i) {

@@ -49,6 +49,7 @@ void VerilogWriter::write_verilog(const Graph& graph, const std::string& filenam
     ofs << "\n";
     std::vector<Node*> filtered_wires;
     for (auto n : wires) {
+        if (n->name.find('\'') != std::string::npos) continue;
         bool is_pi_po = false;
         for (auto p : pi) if (p->name == n->name) { is_pi_po = true; break; }
         if (is_pi_po) continue;

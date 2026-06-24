@@ -52,6 +52,19 @@ _SYSTEM_PROMPT = (
     "functional equivalence'), call check_equivalence after the transformation "
     "to formally verify the result before writing the design, and report the outcome. "
     "Do not discuss scoring, judging, or the evaluation process."
+
+    "ANALYSIS tools: count_gates, list_nodes, get_node_info, get_fanin_cone, get_fanout_cone, count_fanin_gates, count_fanout_gates, get_fanin_depth, analyze_depth, analyze_critical_path, find_paths, list_pio (PI/PO listing with bit widths — zero params), deepest_cone_output (which output has deepest fanin cone — zero params)."
+    "TRANSFORM tools: replace_gate (single gate type change), insert_buffers (fanout-based), insert_dedicated_buffers (per-signal), reduce_depth (ABC optimization), remove_dangling, rename_node, decompose_gates_in_cone (cone-scoped decomposition), collapse_inverters (remove back-to-back NOT pairs — zero params, just call it), merge_equivalent_gates (remove structural duplicates — zero params), convert_cone_to_basis (cone to target basis), reconstruct_netlist_to_basis (ENTIRE design to target basis), restructure_to_depth, optimize_outputs_to_depth, const_propagate (simplify gates with constant inputs; mode='report' to scan, 'propagate' to simplify with cascading; optional gate_type and const_value filters)."
+    "IO tools: load_design, write_design."
+    "VERIFY tools: check_equivalence."
+
+    "KEY RULES:"
+    " For 'collapse/remove back-to-back inverters': use collapse_inverters directly."
+    " For 'replace ALL gates of type X in the ENTIRE design': use reconstruct_netlist_to_basis if converting to a basis, or iterate replace_gate."
+    " For 'replace gates of type X WITHIN a cone': use decompose_gates_in_cone or convert_cone_to_basis."
+    " For gate counts after transformation: read gate_delta from the tool result, do NOT recount manually."
+    " For 'how many PI/PO', 'list all primary inputs/outputs': use list_pio directly."
+    " For 'which output has deepest cone', 'max combinational depth': use deepest_cone_output directly."
 )
 
 
@@ -87,11 +100,14 @@ class Planner:
             "reconstruct_netlist_to_basis": engine.reconstruct_netlist_to_basis,
             "restructure_to_depth": engine.restructure_to_depth,
             "optimize_outputs_to_depth": engine.optimize_outputs_to_depth,
+            "const_propagate": engine.const_propagate,
             "check_equivalence": engine.check_equivalence,
             "count_fanout_gates": engine.count_fanout_gates,
             "get_fanin_cone": engine.get_fanin_cone,
             "get_fanout_cone": engine.get_fanout_cone,
             "get_fanin_depth": engine.get_fanin_depth,
+            "list_pio": engine.list_pio,
+            "deepest_cone_output": engine.deepest_cone_output,
         }
 
     # ------------------------------------------------------------------ public

@@ -190,6 +190,18 @@ int main(int argc, char** argv) {
         for (auto t : types) {
             std::cout << gate_type_to_string(t) << ": " << counts[t] << "\n";
         }
+    } else if (action == "list_pio") {
+        std::cout << g.list_pio() << std::endl;
+    } else if (action == "deepest_cone_output") {
+        std::cout << g.deepest_cone_output() << std::endl;
+    } else if (action == "const_propagate") {
+        std::string m = args.count("--mode") ? args["--mode"] : "propagate";
+        std::string gtf = args.count("--gate_type") ? args["--gate_type"] : "";
+        std::string cvf = args.count("--const_value") ? args["--const_value"] : "";
+        std::string result = g.const_propagate(m, gtf, cvf);
+        if (m == "propagate" && args.count("--out"))
+            VerilogWriter::write_verilog(g, args["--out"]);
+        std::cout << result << std::endl;
     } else {
         log_error("Unknown action: " + action);
         return 1;

@@ -255,6 +255,14 @@ class EDAEngine:
         """Calculate the maximum logic depth within the fanin cone of a node."""
         return self._run_action("get_fanin_depth", node=node_name)
 
+    def list_pio(self) -> str:
+        """List all primary inputs and outputs with bit widths and vector grouping."""
+        return self._run_action("list_pio")
+
+    def deepest_cone_output(self) -> str:
+        """Find the primary output with the deepest fanin logic cone."""
+        return self._run_action("deepest_cone_output")
+
     def write_design(self, filepath: str) -> str:
         """Write the design to a file.
 
@@ -488,6 +496,31 @@ class EDAEngine:
             f"{res} The logic has already been globally depth-optimized; any outputs "
             f"still above depth {max_depth} are at their minimum achievable depth."
         )
+
+    def const_propagate(self, mode: str = "propagate",
+                        gate_type: str = "", const_value: str = "") -> str:
+        """Detect and simplify gates with constant inputs (1'b0, 1'b1).
+
+        mode='report' scans without modifying; mode='propagate' applies
+        simplification with cascading. Optional gate_type and const_value
+        filters narrow which gates are processed.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        kwargs: Dict[str, str] = {"mode": mode}
+        if gate_type:
+            kwargs["gate_type"] = gate_type
+        if const_value:
+            kwargs["const_value"] = const_value
+        if mode == "propagate":
+            work = self._session_path("constprop")
+            kwargs["out"] = work
+        res = self._run_action("const_propagate", **kwargs)
+        if mode == "propagate":
+            out_path = kwargs.get("out", "")
+            if out_path and os.path.isfile(out_path):
+                self._loaded_filepath = out_path
+        return res
 
     def decompose_gates_in_cone(self, cone_root: str, gate_type: str,
                                 target_basis: str) -> str:

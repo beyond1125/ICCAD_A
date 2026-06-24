@@ -516,6 +516,38 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "const_propagate",
+            "description": (
+                "Detect and simplify gates with constant inputs. Use mode='report' to "
+                "list without modifying, mode='propagate' to apply simplification. Can "
+                "filter by gate_type and const_value. Handles cascading: if simplification "
+                "creates new constant signals, they are propagated iteratively."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["report", "propagate"],
+                        "description": "report: scan only, no modification; propagate: apply simplification (default).",
+                    },
+                    "gate_type": {
+                        "type": "string",
+                        "description": "Optional gate type filter, e.g. 'NAND'. Only process gates of this type.",
+                    },
+                    "const_value": {
+                        "type": "string",
+                        "enum": ["0", "1"],
+                        "description": "Optional: only process gates whose constant input has this value (0 or 1).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "check_equivalence",
             "description": (
                 "Formally verify that the current (possibly transformed) design is "
@@ -566,6 +598,37 @@ EDA_TOOLS: List[Dict[str, Any]] = [
                 },
                 "required": ["target", "new_type"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_pio",
+            "description": (
+                "List all primary inputs (PI) and primary outputs (PO) in the "
+                "current design, with their bit widths. Also groups bus signals "
+                "(e.g. data[0]..data[7]) into vectors. Returns JSON with "
+                "pi_count, po_count, primary_inputs, primary_outputs, "
+                "pi_vectors, and po_vectors. Call this for 'how many primary "
+                "inputs/outputs', 'list all PIs with bit widths', 'determine "
+                "the number of primary inputs and outputs'."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "deepest_cone_output",
+            "description": (
+                "Find which primary output has the deepest (largest) fanin "
+                "logic cone in terms of combinational gate levels. Returns "
+                "JSON with the deepest output name, its depth, and all output "
+                "depths sorted descending. Call this for 'which output bit has "
+                "the deepest fanin logic cone', 'which output has the largest "
+                "fanin cone', or 'what is the maximum combinational depth'."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
 ]

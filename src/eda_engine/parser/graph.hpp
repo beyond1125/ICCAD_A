@@ -48,6 +48,9 @@ public:
     int remap_cone_to_basis(const std::string& root, const std::string& basis);
     std::string outputs_over_depth(int max_depth);
     int merge_duplicate_gates();
+    std::string const_propagate(const std::string& mode, const std::string& gate_type_filter, const std::string& const_value_filter);
+    std::string list_pio();
+    std::string deepest_cone_output();
 
 private:
     void find_all_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, std::vector<std::vector<Node*>>& all_paths);
