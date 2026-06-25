@@ -418,13 +418,21 @@ class EDAEngine:
     def convert_cone_to_basis(self, cone_root: str, target_basis: str) -> str:
         """Convert every gate in a node's fanin cone to a target gate basis.
 
-        Supports NOR+NOT. Functionally equivalent. Handles requests like 'convert
-        the logic cone of n10 to use only NOR and NOT gates'.
+        Supports NOR+NOT, AND+NOT, and NAND+NOT. Functionally equivalent. Handles
+        requests like 'convert the logic cone of n10 to use only NOR and NOT gates'
+        or 'restructure the cone of n8 using only NAND and NOT gates'.
         """
         if not self._loaded_filepath:
             return "Error: No design loaded."
         b = target_basis.lower()
-        basis = "nor_not" if ("nor" in b and "not" in b) else b.replace(" ", "_").replace("+", "_")
+        if "nand" in b and "not" in b:
+            basis = "nand_not"
+        elif "nor" in b and "not" in b:
+            basis = "nor_not"
+        elif "and" in b and "not" in b:
+            basis = "and_not"
+        else:
+            basis = re.sub(r"[^a-z]+", "_", b).strip("_")
         work = self._session_path("remapped")
         res = self._run_action("remap_cone", root=cone_root, basis=basis, out=work)
         if res.startswith("Converted") and os.path.isfile(work):

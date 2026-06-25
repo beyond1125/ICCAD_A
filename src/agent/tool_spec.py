@@ -384,7 +384,7 @@ EDA_TOOLS: List[Dict[str, Any]] = [
             "description": (
                 "Replace all gates of a given type within the fanin cone of a node "
                 "with equivalent logic built only from a target gate basis, preserving "
-                "functionality. Currently supports replacing 2-input OR gates with "
+                "functionality. Replaces e.g. 2-input OR gates with "
                 "NAND and NOT gates. Call this for requests like 'replace all 2-input "
                 "OR gates in the cone of n11[0] with equivalent logic built only from "
                 "NAND and NOT gates'."
@@ -461,14 +461,14 @@ EDA_TOOLS: List[Dict[str, Any]] = [
             "name": "reconstruct_netlist_to_basis",
             "description": (
                 "Reconstruct the ENTIRE netlist using only a target gate basis "
-                "(AND+NOT or NOR+NOT), preserving functionality. Call this for "
+                "(AND+NOT, NOR+NOT, or NAND+NOT), preserving functionality. Call this for "
                 "'reconstruct the entire netlist using only AND and NOT gates'. For a "
                 "single node's cone, use convert_cone_to_basis instead."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "target_basis": {"type": "string", "description": "Basis, e.g. 'AND_NOT' or 'NOR_NOT'."},
+                    "target_basis": {"type": "string", "description": "Basis, e.g. 'AND_NOT', 'NOR_NOT', or 'NAND_NOT'."},
                 },
                 "required": ["target_basis"],
             },

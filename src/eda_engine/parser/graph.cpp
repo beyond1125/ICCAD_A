@@ -1009,8 +1009,8 @@ int Graph::collapse_inverters() {
 // XOR/XNOR are decomposed into the basis; inverters are shared. NOT and the basis's
 // kept gate stay as-is. Returns the number of gates rewritten, or -1 if unsupported.
 int Graph::remap_cone_to_basis(const std::string& root, const std::string& basis) {
-    bool nor_b = (basis == "nor_not"), and_b = (basis == "and_not");
-    if (!nor_b && !and_b) return -1;
+    bool nor_b = (basis == "nor_not"), and_b = (basis == "and_not"), nand_b = (basis == "nand_not");
+    if (!nor_b && !and_b && !nand_b) return -1;
 
     std::vector<Node*> scope;
     if (root.empty()) {
@@ -1023,7 +1023,8 @@ int Graph::remap_cone_to_basis(const std::string& root, const std::string& basis
     std::vector<Node*> targets;
     for (Node* g : scope) {
         GateType t = g->gate_type;
-        bool kept = (t == GateType::NOT) || (nor_b && t == GateType::NOR) || (and_b && t == GateType::AND);
+        bool kept = (t == GateType::NOT) || (nor_b && t == GateType::NOR) ||
+                    (and_b && t == GateType::AND) || (nand_b && t == GateType::NAND);
         if (!kept && t != GateType::DFF && t != GateType::UNKNOWN) targets.push_back(g);
     }
 
@@ -1062,7 +1063,7 @@ int Graph::remap_cone_to_basis(const std::string& root, const std::string& basis
                 Node* p = mk2(GateType::NOR, inv(a), b), * q = mk2(GateType::NOR, a, inv(b));
                 add_edge(p, g); add_edge(q, g); g->gate_type = GateType::NOR;
             }
-        } else {  // and_not
+        } else if (and_b) {  // and_not
             if (t == GateType::NOR) { add_edge(inv(a), g); add_edge(inv(b), g); g->gate_type = GateType::AND; }
             else if (t == GateType::NAND) { add_edge(mk2(GateType::AND, a, b), g); g->gate_type = GateType::NOT; }
             else if (t == GateType::OR) { add_edge(mk2(GateType::AND, inv(a), inv(b)), g); g->gate_type = GateType::NOT; }
@@ -1072,6 +1073,19 @@ int Graph::remap_cone_to_basis(const std::string& root, const std::string& basis
             } else if (t == GateType::XNOR) {              // XNOR = AND(!(a&!b), !(!a&b))
                 Node* p = inv(mk2(GateType::AND, a, inv(b))), * q = inv(mk2(GateType::AND, inv(a), b));
                 add_edge(p, g); add_edge(q, g); g->gate_type = GateType::AND;
+            }
+        } else {  // nand_not
+            if (t == GateType::AND) { add_edge(mk2(GateType::NAND, a, b), g); g->gate_type = GateType::NOT; }
+            else if (t == GateType::OR) { add_edge(inv(a), g); add_edge(inv(b), g); g->gate_type = GateType::NAND; }
+            else if (t == GateType::NOR) { add_edge(mk2(GateType::NAND, inv(a), inv(b)), g); g->gate_type = GateType::NOT; }
+            else if (t == GateType::XOR) {                 // 4-NAND XOR
+                Node* n1 = mk2(GateType::NAND, a, b);
+                Node* n2 = mk2(GateType::NAND, a, n1), * n3 = mk2(GateType::NAND, b, n1);
+                add_edge(n2, g); add_edge(n3, g); g->gate_type = GateType::NAND;
+            } else if (t == GateType::XNOR) {              // XNOR = NOT(4-NAND XOR)
+                Node* n1 = mk2(GateType::NAND, a, b);
+                Node* n2 = mk2(GateType::NAND, a, n1), * n3 = mk2(GateType::NAND, b, n1);
+                add_edge(mk2(GateType::NAND, n2, n3), g); g->gate_type = GateType::NOT;
             }
         }
     }
