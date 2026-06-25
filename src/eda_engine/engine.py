@@ -552,13 +552,16 @@ class EDAEngine:
         before_raw = self.count_gates()
         before_counts = self._parse_gate_counts(before_raw)
 
-        b = target_basis.lower()
-        if "nand" in b and "not" in b:
-            basis = "nand_not"
-        elif "nor" in b and "not" in b:
-            basis = "nor_not"
-        elif "and" in b and "or" in b and "not" in b:
+        b = target_basis.lower().replace("-", " ")
+        has_not = "not" in b
+        if "nand" in b:
+            basis = "nand_not" if has_not else "nand"       # NAND+NOT, or NAND-only (4-NAND)
+        elif "nor" in b:
+            basis = "nor_not" if has_not else "nor"          # NOR+NOT, or NOR-only
+        elif "and" in b and "or" in b:
             basis = "and_or_not"
+        elif "and" in b:
+            basis = "and_not"
         else:
             basis = re.sub(r"[^a-z]+", "_", b).strip("_")
         # Pick the gate keyword the user named (e.g. "2-input OR gates" -> "or").
@@ -590,6 +593,16 @@ class EDAEngine:
                 + json.dumps(delta, ensure_ascii=False)
             )
         return res
+
+    def decompose_all_gates(self, gate_type: str, target_basis: str) -> str:
+        """Replace every gate of a type in the WHOLE design with a target basis.
+
+        Supports OR->NAND+NOT, XOR->AND/OR/NOT, XOR->NAND (4-NAND), XNOR->NOR-only.
+        Functionally equivalent; reports a gate-count delta. Handles requests like
+        'replace all XNOR gates with NOR-only implementations' or 'convert every XOR
+        gate to an equivalent 4-NAND circuit'.
+        """
+        return self.decompose_gates_in_cone("", gate_type, target_basis)
 
     @staticmethod
     def _parse_gate_counts(raw: str) -> Dict[str, int]:

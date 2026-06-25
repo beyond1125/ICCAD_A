@@ -611,7 +611,13 @@ std::unordered_set<Node*> Graph::fanin_cone_gates(const std::string& root) {
 }
 
 int Graph::decompose_in_cone(const std::string& root, const std::string& from_type, const std::string& basis) {
-    auto cone = fanin_cone_gates(root);
+    std::vector<Node*> cone;                               // scope: whole design if root empty
+    if (root.empty()) {
+        for (Node* n : all_nodes)
+            if (n->type == NodeType::GATE && n->gate_type != GateType::DFF) cone.push_back(n);
+    } else {
+        auto c = fanin_cone_gates(root); cone.assign(c.begin(), c.end());
+    }
     int ctr = 0;
     auto fresh = [&](const std::string& pfx) {
         std::string nm; do { nm = pfx + std::to_string(ctr++); } while (nodes.count(nm)); return nm;
@@ -642,6 +648,28 @@ int Graph::decompose_in_cone(const std::string& root, const std::string& from_ty
             Node* na = mk(GateType::NOT, {a}); Node* nb = mk(GateType::NOT, {b});
             Node* t1 = mk(GateType::AND, {a, nb}); Node* t2 = mk(GateType::AND, {na, b});
             g->inputs.clear(); add_edge(t1, g); add_edge(t2, g); g->gate_type = GateType::OR;
+        }
+        return (int)targets.size();
+    }
+    if (from_type == "xor" && basis == "nand") {           // 4-NAND XOR
+        std::vector<Node*> targets;
+        for (Node* g : cone) if (g->gate_type == GateType::XOR && g->inputs.size() == 2) targets.push_back(g);
+        for (Node* g : targets) {
+            Node* a = g->inputs[0]; Node* b = g->inputs[1]; rm(a->outputs, g); rm(b->outputs, g);
+            Node* n1 = mk(GateType::NAND, {a, b});
+            Node* n2 = mk(GateType::NAND, {a, n1}); Node* n3 = mk(GateType::NAND, {b, n1});
+            g->inputs.clear(); add_edge(n2, g); add_edge(n3, g); g->gate_type = GateType::NAND;
+        }
+        return (int)targets.size();
+    }
+    if (from_type == "xnor" && basis == "nor") {           // 4-NOR XNOR (NOR-only)
+        std::vector<Node*> targets;
+        for (Node* g : cone) if (g->gate_type == GateType::XNOR && g->inputs.size() == 2) targets.push_back(g);
+        for (Node* g : targets) {
+            Node* a = g->inputs[0]; Node* b = g->inputs[1]; rm(a->outputs, g); rm(b->outputs, g);
+            Node* n1 = mk(GateType::NOR, {a, b});
+            Node* n2 = mk(GateType::NOR, {a, n1}); Node* n3 = mk(GateType::NOR, {b, n1});
+            g->inputs.clear(); add_edge(n2, g); add_edge(n3, g); g->gate_type = GateType::NOR;
         }
         return (int)targets.size();
     }

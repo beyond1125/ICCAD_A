@@ -425,6 +425,28 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "decompose_all_gates",
+            "description": (
+                "Replace EVERY gate of a given type in the whole design with equivalent "
+                "logic from a target basis, preserving functionality. Supports "
+                "XNOR->NOR-only, XOR->NAND (4-NAND per XOR), XOR->AND/OR/NOT, "
+                "OR->NAND+NOT. Call this for 'replace all XNOR gates with NOR-only "
+                "implementations' or 'convert every XOR gate to an equivalent 4-NAND "
+                "circuit'. For one node's cone, use decompose_gates_in_cone instead."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "gate_type": {"type": "string", "description": "Gate type to replace, e.g. 'XNOR' or 'XOR'."},
+                    "target_basis": {"type": "string", "description": "Target basis, e.g. 'NOR-only', 'NAND' (4-NAND), 'AND/OR/NOT'."},
+                },
+                "required": ["gate_type", "target_basis"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "merge_equivalent_gates",
             "description": (
                 "Find and merge all gate pairs that compute the same function "

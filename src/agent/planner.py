@@ -94,6 +94,7 @@ class Planner:
             "remove_dangling": engine.remove_dangling,
             "rename_node": engine.rename_node,
             "decompose_gates_in_cone": engine.decompose_gates_in_cone,
+            "decompose_all_gates": engine.decompose_all_gates,
             "collapse_inverters": engine.collapse_inverters,
             "merge_equivalent_gates": engine.merge_equivalent_gates,
             "convert_cone_to_basis": engine.convert_cone_to_basis,

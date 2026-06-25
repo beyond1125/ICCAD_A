@@ -82,8 +82,10 @@ int main(int argc, char** argv) {
                       << "' to basis '" << args["--basis"] << "')." << std::endl;
         } else {
             if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
-            std::cout << "Replaced " << n << " " << args["--gate"] << " gate(s) in the cone of "
-                      << args["--root"] << " with " << args["--basis"] << " logic." << std::endl;
+            std::cout << "Replaced " << n << " " << args["--gate"] << " gate(s) "
+                      << (args["--root"].empty() ? "in the design"
+                                                 : "in the cone of " + args["--root"])
+                      << " with " << args["--basis"] << " logic." << std::endl;
         }
     } else if (action == "sweep") {
         int removed = g.sweep_dangling();
