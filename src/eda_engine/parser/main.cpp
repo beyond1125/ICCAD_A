@@ -194,6 +194,8 @@ int main(int argc, char** argv) {
         std::cout << g.list_pio() << std::endl;
     } else if (action == "deepest_cone_output") {
         std::cout << g.deepest_cone_output() << std::endl;
+    } else if (action == "r2r_paths") {
+        std::cout << g.r2r_paths() << std::endl;
     } else if (action == "const_propagate") {
         std::string m = args.count("--mode") ? args["--mode"] : "propagate";
         std::string gtf = args.count("--gate_type") ? args["--gate_type"] : "";

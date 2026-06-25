@@ -1254,3 +1254,160 @@ std::string Graph::deepest_cone_output() {
     return ss.str();
 }
 
+std::string Graph::r2r_paths() {
+    const int MAX_PATHS_PER_PAIR = 5;
+    const int MAX_TOTAL_PATHS = 200;
+
+    struct DFFInfo {
+        Node* dff;
+        std::string q_wire;
+        std::string d_wire;
+        std::string q_pin;
+        std::string d_pin;
+    };
+
+    std::vector<DFFInfo> dffs;
+    for (Node* n : all_nodes) {
+        if (n->type != NodeType::GATE || n->gate_type != GateType::DFF) continue;
+        DFFInfo info;
+        info.dff = n;
+        info.q_pin = "Q";
+        info.d_pin = "D";
+        if (!n->pin_conns.empty()) {
+            for (auto& pc : n->pin_conns) {
+                if (pc.pin == "Q" || pc.pin == "QN") {
+                    info.q_wire = pc.signal;
+                    info.q_pin = pc.pin;
+                }
+                if (pc.pin == "D") info.d_wire = pc.signal;
+            }
+        } else {
+            if (!n->outputs.empty()) info.q_wire = n->outputs[0]->name;
+            if (!n->inputs.empty()) info.d_wire = n->inputs[0]->name;
+        }
+        if (!info.q_wire.empty() && !info.d_wire.empty()) dffs.push_back(info);
+    }
+
+    if (dffs.empty()) {
+        return "{\"r2r_paths\": [], \"total_r2r_pairs\": 0, \"total_paths\": 0, "
+               "\"message\": \"No DFFs found in design\"}";
+    }
+
+    std::unordered_set<std::string> d_wires;
+    for (auto& di : dffs) d_wires.insert(di.d_wire);
+
+    std::unordered_map<std::string, std::string> d_wire_to_dff;
+    std::unordered_map<std::string, std::string> d_wire_to_pin;
+    for (auto& di : dffs) {
+        d_wire_to_dff[di.d_wire] = di.dff->name;
+        d_wire_to_pin[di.d_wire] = di.d_pin;
+    }
+
+    struct R2REntry {
+        std::string from_dff, from_pin, to_dff, to_pin;
+        std::vector<std::vector<std::string>> paths;
+    };
+
+    std::vector<R2REntry> results;
+    int total_paths = 0;
+    bool truncated = false;
+
+    for (auto& src : dffs) {
+        if (truncated) break;
+        Node* q_node = nodes.count(src.q_wire) ? nodes[src.q_wire] : nullptr;
+        if (!q_node) continue;
+
+        std::unordered_map<std::string, std::vector<std::vector<std::string>>> found;
+
+        struct Frame { Node* node; std::vector<std::string> path; };
+        std::vector<Frame> stack;
+        stack.push_back({q_node, {src.dff->name + "/" + src.q_pin, q_node->name}});
+
+        while (!stack.empty() && !truncated) {
+            Frame f = std::move(stack.back());
+            stack.pop_back();
+
+            if (d_wires.count(f.node->name) && f.path.size() > 2) {
+                std::string dest_dff = d_wire_to_dff[f.node->name];
+                std::string dest_pin = d_wire_to_pin[f.node->name];
+                std::string key = dest_dff + "/" + dest_pin;
+                auto& pvec = found[key];
+                if ((int)pvec.size() < MAX_PATHS_PER_PAIR) {
+                    auto p = f.path;
+                    p.push_back(dest_dff + "/" + dest_pin);
+                    pvec.push_back(std::move(p));
+                    total_paths++;
+                    if (total_paths >= MAX_TOTAL_PATHS) { truncated = true; break; }
+                }
+                continue;
+            }
+
+            for (Node* next : f.node->outputs) {
+                if (next->type == NodeType::GATE && next->gate_type == GateType::DFF) {
+                    if (d_wires.count(f.node->name)) {
+                        std::string dest_dff = d_wire_to_dff[f.node->name];
+                        std::string dest_pin = d_wire_to_pin[f.node->name];
+                        std::string key = dest_dff + "/" + dest_pin;
+                        auto& pvec = found[key];
+                        if ((int)pvec.size() < MAX_PATHS_PER_PAIR) {
+                            auto p = f.path;
+                            p.push_back(dest_dff + "/" + dest_pin);
+                            pvec.push_back(std::move(p));
+                            total_paths++;
+                            if (total_paths >= MAX_TOTAL_PATHS) { truncated = true; }
+                        }
+                    }
+                    continue;
+                }
+                if (f.path.size() > 200) continue;
+                auto np = f.path;
+                np.push_back(next->name);
+                stack.push_back({next, std::move(np)});
+            }
+        }
+
+        for (auto& kv : found) {
+            R2REntry e;
+            e.from_dff = src.dff->name;
+            e.from_pin = src.q_pin;
+            size_t slash = kv.first.find('/');
+            e.to_dff = kv.first.substr(0, slash);
+            e.to_pin = kv.first.substr(slash + 1);
+            e.paths = std::move(kv.second);
+            results.push_back(std::move(e));
+        }
+    }
+
+    int total_r2r_pairs = (int)results.size();
+
+    std::ostringstream ss;
+    ss << "{\n  \"r2r_paths\": [\n";
+    for (int i = 0; i < (int)results.size(); ++i) {
+        auto& e = results[i];
+        ss << "    {\"from_dff\": \"" << e.from_dff
+           << "\", \"from_pin\": \"" << e.from_pin
+           << "\", \"to_dff\": \"" << e.to_dff
+           << "\", \"to_pin\": \"" << e.to_pin
+           << "\", \"path_count\": " << e.paths.size()
+           << ", \"paths\": [";
+        for (int j = 0; j < (int)e.paths.size(); ++j) {
+            ss << "[";
+            for (int k = 0; k < (int)e.paths[j].size(); ++k) {
+                ss << "\"" << e.paths[j][k] << "\"";
+                if (k + 1 < (int)e.paths[j].size()) ss << ", ";
+            }
+            ss << "]";
+            if (j + 1 < (int)e.paths.size()) ss << ", ";
+        }
+        ss << "]}";
+        if (i + 1 < (int)results.size()) ss << ",";
+        ss << "\n";
+    }
+    ss << "  ],\n  \"total_r2r_pairs\": " << total_r2r_pairs
+       << ",\n  \"total_paths\": " << total_paths;
+    if (truncated) ss << ",\n  \"truncated\": true, \"message\": \"Results truncated to limit\"";
+    else ss << ",\n  \"truncated\": false";
+    ss << "\n}";
+    return ss.str();
+}
+

@@ -619,6 +619,19 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "r2r_paths",
+            "description": (
+                "List all register-to-register paths through combinational logic. "
+                "Finds paths from DFF Q outputs to DFF D inputs, traversing only "
+                "combinational gates. Use for timing path analysis and sequential "
+                "design understanding."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "deepest_cone_output",
             "description": (
                 "Find which primary output has the deepest (largest) fanin "

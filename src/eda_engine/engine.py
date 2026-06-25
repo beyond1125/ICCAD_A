@@ -259,6 +259,10 @@ class EDAEngine:
         """List all primary inputs and outputs with bit widths and vector grouping."""
         return self._run_action("list_pio")
 
+    def r2r_paths(self) -> str:
+        """List all register-to-register paths through combinational logic."""
+        return self._run_action("r2r_paths")
+
     def deepest_cone_output(self) -> str:
         """Find the primary output with the deepest fanin logic cone."""
         return self._run_action("deepest_cone_output")

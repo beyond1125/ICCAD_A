@@ -51,6 +51,7 @@ public:
     std::string const_propagate(const std::string& mode, const std::string& gate_type_filter, const std::string& const_value_filter);
     std::string list_pio();
     std::string deepest_cone_output();
+    std::string r2r_paths();
 
 private:
     void find_all_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, std::vector<std::vector<Node*>>& all_paths);
