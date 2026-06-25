@@ -223,14 +223,8 @@ class Planner:
         and return a compact JSON summary instead.
 
         This is a generic interceptor that protects against ANY tool returning
-        a massive string (list_nodes, get_fanin_cone, get_fanout_cone, etc.).
-        The find_paths tool has its own built-in truncation in engine.py, so
-        results that are already JSON-formatted are passed through.
+        a massive string — plain text or JSON.
         """
-        # Skip results that are already compact JSON (e.g. from find_paths).
-        if result.lstrip().startswith("{"):
-            return result
-
         if len(result) <= self._MAX_RESULT_CHARS:
             return result
 
@@ -249,17 +243,33 @@ class Planner:
             f.write(result)
 
         # ── Build a compact summary ───────────────────────────────────────
+        notice = (
+            f"The output from '{tool_name}' is too large to fit in LLM context. "
+            f"Full details saved to {log_path}"
+        )
+
+        if result.lstrip().startswith("{"):
+            try:
+                obj = json.loads(result)
+                compact: dict = {"notice": notice, "saved_to_file": log_path}
+                for k, v in obj.items():
+                    if isinstance(v, (str, int, float, bool)) or v is None:
+                        compact[k] = v
+                    elif isinstance(v, list):
+                        compact[f"{k}_count"] = len(v)
+                        compact[f"{k}_sample"] = v[:3]
+                    elif isinstance(v, dict) and len(json.dumps(v)) < 500:
+                        compact[k] = v
+                return json.dumps(compact, ensure_ascii=False, indent=2)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         lines = result.splitlines()
         total_lines = len(lines)
-        samples = lines[:5]
-
         summary = {
-            "notice": (
-                f"The output from '{tool_name}' is too large to fit in LLM context "
-                f"({total_lines} lines). Full details saved to {log_path}"
-            ),
+            "notice": notice,
             "total_lines": total_lines,
             "saved_to_file": log_path,
-            "samples": samples,
+            "samples": lines[:5],
         }
         return json.dumps(summary, ensure_ascii=False, indent=2)
