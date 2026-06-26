@@ -60,7 +60,15 @@ def run_case(n: int, config: str, timeout: int) -> dict:
         out_log.write_text(r.stdout)
         ends = r.stdout.count("#END")
         wrote_v = (pdir / f"{name}_out.v").is_file()
-        if r.returncode != 0:
+        # Detect LLM/API failures that still produce #END (e.g. a 401 bad key makes
+        # every turn return an error message), so we don't falsely report success.
+        blob = r.stdout + "\n" + r.stderr
+        api_fail = any(s in blob for s in (
+            "LLM API error", "Error communicating with the LLM",
+            "Incorrect API key", "401", "AuthenticationError", "RateLimitError"))
+        if api_fail:
+            status = "APIERR"       # key invalid / rate-limited / LLM unreachable
+        elif r.returncode != 0:
             status = "ERR"
         elif ends >= turns and wrote_v:
             status = "OK"
@@ -68,8 +76,12 @@ def run_case(n: int, config: str, timeout: int) -> dict:
             status = "OK*"          # all turns answered, no output .v detected
         else:
             status = "PARTIAL"      # ran out of turns / stopped early
+        msg = r.stderr.strip()
+        if api_fail and "API error" in blob:
+            line = next((l for l in blob.splitlines() if "API error" in l), "")
+            msg = line.strip()[:160] or msg
         return {"name": name, "status": status, "secs": secs, "ends": ends,
-                "turns": turns, "stderr": r.stderr.strip()[:200]}
+                "turns": turns, "stderr": msg[:200]}
     except subprocess.TimeoutExpired:
         return {"name": name, "status": "TIMEOUT", "secs": time.time() - t0,
                 "ends": 0, "turns": turns, "stderr": ""}
