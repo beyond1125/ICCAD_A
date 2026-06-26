@@ -146,6 +146,33 @@ class EDAEngine:
         """Return structural information about *node_name*."""
         return self._run_action("get_info", node=node_name)
 
+    def list_gates_by_type(self, gate_type: str) -> str:
+        """List every gate of a type with its input/output signals (JSON)."""
+        gt = gate_type.lower()
+        gate = next((k for k in ("xnor", "nand", "nor", "xor", "and", "or", "not", "buf", "dff")
+                     if k in gt), gt.strip())
+        return self._run_action("list_gates_by_type", gate=gate)
+
+    def flipflops_by_clock(self, clock: str) -> str:
+        """List flip-flops driven by the given clock signal (JSON)."""
+        return self._run_action("flipflops_by_clock", clock=clock)
+
+    def max_pi_to_dff_depth(self) -> str:
+        """Max combinational depth from any primary input to any flip-flop D pin (JSON)."""
+        return self._run_action("max_pi_to_dff_depth")
+
+    def list_floating(self) -> str:
+        """List floating inputs, unconnected outputs, and undriven signals (JSON)."""
+        return self._run_action("list_floating")
+
+    def signal_depends_on(self, target: str, source: str) -> str:
+        """Whether `target` depends on `source` (source in target's transitive fanin)."""
+        return self._run_action("signal_depends_on", target=target, source=source)
+
+    def highest_fanout_pi(self) -> str:
+        """Primary input with the highest fanout (incl. clock/reset control-pin loads)."""
+        return self._run_action("highest_fanout_pi")
+
     def analyze_depth(self, start_node: Optional[str] = None, end_node: str = "") -> str:
         """Calculate combinational depth."""
         kwargs = {"end": end_node}

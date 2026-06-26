@@ -765,6 +765,122 @@ std::string Graph::outputs_over_depth(int max_depth) {
     return ss.str();
 }
 
+// List every gate of a given type with its input and output signals.
+std::string Graph::list_gates_by_type(const std::string& type_str) {
+    GateType t = string_to_gate_type(type_str);
+    std::ostringstream ss;
+    ss << "{\n  \"gate_type\": \"" << type_str << "\",\n  \"gates\": [";
+    bool first = true; int count = 0;
+    for (Node* n : all_nodes) {
+        if (n->type != NodeType::GATE || n->gate_type != t) continue;
+        ++count; ss << (first ? "\n    " : ",\n    "); first = false;
+        ss << "{\"name\": \"" << n->name << "\", \"inputs\": [";
+        for (size_t i = 0; i < n->inputs.size(); ++i) ss << (i ? "," : "") << "\"" << n->inputs[i]->name << "\"";
+        ss << "], \"output\": \"" << (n->outputs.empty() ? "" : n->outputs[0]->name) << "\"}";
+    }
+    ss << "\n  ],\n  \"count\": " << count << "\n}";
+    return ss.str();
+}
+
+// List flip-flops whose clock pin is driven by the given clock signal.
+std::string Graph::flipflops_by_clock(const std::string& clock) {
+    std::ostringstream ss;
+    ss << "{\n  \"clock\": \"" << clock << "\",\n  \"flip_flops\": [";
+    bool first = true; int count = 0;
+    for (Node* n : all_nodes) {
+        if (n->type != NodeType::GATE || n->gate_type != GateType::DFF) continue;
+        for (const PinConn& pc : n->pin_conns)
+            if ((pc.pin == "CK" || pc.pin == "CLK") && pc.signal == clock) {
+                ++count; ss << (first ? "\n    " : ",\n    "); first = false;
+                ss << "{\"name\": \"" << n->name << "\", \"Q\": \"" << (n->outputs.empty() ? "" : n->outputs[0]->name) << "\"}";
+                break;
+            }
+    }
+    ss << "\n  ],\n  \"count\": " << count << "\n}";
+    return ss.str();
+}
+
+// Maximum combinational logic depth from any primary input to any flip-flop D pin.
+std::string Graph::max_pi_to_dff_depth() {
+    auto levels = compute_levels(nullptr);
+    int maxd = -1; std::string which, dnet;
+    for (Node* n : all_nodes) {
+        if (n->type != NodeType::GATE || n->gate_type != GateType::DFF || n->inputs.empty()) continue;
+        Node* d = n->inputs[0];
+        int dep = levels.count(d) ? levels[d] : -1;
+        if (dep > maxd) { maxd = dep; which = n->name; dnet = d->name; }
+    }
+    std::ostringstream ss;
+    ss << "{\"max_pi_to_dff_d_depth\": " << maxd << ", \"dff\": \"" << which
+       << "\", \"d_net\": \"" << dnet << "\"}";
+    return ss.str();
+}
+
+// Report floating signals: primary inputs that drive nothing, primary outputs with no
+// driver, and internal signals that are read but never driven.
+std::string Graph::list_floating() {
+    // Signals used through DFF control pins (clock/reset/set) are referenced by name
+    // in pin_conns, not by graph edges; treat those as connected.
+    std::unordered_set<std::string> ctrl_used;
+    for (Node* n : all_nodes)
+        if (n->type == NodeType::GATE && n->gate_type == GateType::DFF)
+            for (const PinConn& pc : n->pin_conns)
+                if (!pc.is_const && pc.edge_dir == 0) ctrl_used.insert(pc.signal);
+
+    std::vector<std::string> fin, fout, undriven;
+    for (Node* n : all_nodes) {
+        if (n->type == NodeType::PRIMARY_INPUT && n->outputs.empty() && !ctrl_used.count(n->name)) fin.push_back(n->name);
+        else if (n->type == NodeType::PRIMARY_OUTPUT && n->inputs.empty()) fout.push_back(n->name);
+        else if (n->type == NodeType::SIGNAL && n->inputs.empty() && !n->outputs.empty() && !ctrl_used.count(n->name)) undriven.push_back(n->name);
+    }
+    auto arr = [](std::ostringstream& s, const std::vector<std::string>& v) {
+        s << "["; for (size_t i = 0; i < v.size(); ++i) s << (i ? "," : "") << "\"" << v[i] << "\""; s << "]";
+    };
+    std::ostringstream ss;
+    ss << "{\n  \"floating_inputs\": "; arr(ss, fin);
+    ss << ",\n  \"unconnected_outputs\": "; arr(ss, fout);
+    ss << ",\n  \"undriven_signals\": "; arr(ss, undriven);
+    ss << ",\n  \"count\": " << (fin.size() + fout.size() + undriven.size()) << "\n}";
+    return ss.str();
+}
+
+// Does `target` depend on `source` (is source in target's transitive fanin)?
+std::string Graph::signal_depends_on(const std::string& target, const std::string& source) {
+    bool dep = false;
+    if (nodes.count(target) && nodes.count(source)) {
+        Node* src = nodes[source];
+        std::unordered_set<Node*> vis; std::vector<Node*> st{nodes[target]};
+        while (!st.empty()) {
+            Node* n = st.back(); st.pop_back();
+            if (!vis.insert(n).second) continue;
+            if (n == src) { dep = true; break; }
+            for (Node* d : n->inputs) st.push_back(d);
+        }
+    }
+    std::ostringstream ss;
+    ss << "{\"target\": \"" << target << "\", \"source\": \"" << source
+       << "\", \"depends\": " << (dep ? "true" : "false") << "}";
+    return ss.str();
+}
+
+// Primary input with the highest fanout (edge loads + DFF control-pin references).
+std::string Graph::highest_fanout_pi() {
+    std::unordered_map<std::string, int> ctrl;
+    for (Node* n : all_nodes)
+        if (n->type == NodeType::GATE && n->gate_type == GateType::DFF)
+            for (const PinConn& pc : n->pin_conns)
+                if (!pc.is_const && pc.edge_dir == 0) ctrl[pc.signal]++;
+    std::string best; int bestf = -1;
+    for (Node* n : all_nodes)
+        if (n->type == NodeType::PRIMARY_INPUT) {
+            int f = (int)n->outputs.size() + ctrl[n->name];
+            if (f > bestf) { bestf = f; best = n->name; }
+        }
+    std::ostringstream ss;
+    ss << "{\"primary_input\": \"" << best << "\", \"fanout\": " << bestf << "}";
+    return ss.str();
+}
+
 // Merge structurally-equivalent gates: two non-DFF gates with the same type and the
 // same input nets compute the same function, so one is removed and its consumers are
 // rewired to the survivor. Iterates to a fixpoint (merging an input can expose new

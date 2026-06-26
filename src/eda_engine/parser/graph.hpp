@@ -49,6 +49,12 @@ public:
     int collapse_inverters();
     int remap_cone_to_basis(const std::string& root, const std::string& basis);
     std::string outputs_over_depth(int max_depth);
+    std::string list_gates_by_type(const std::string& type_str);
+    std::string flipflops_by_clock(const std::string& clock);
+    std::string max_pi_to_dff_depth();
+    std::string list_floating();
+    std::string signal_depends_on(const std::string& target, const std::string& source);
+    std::string highest_fanout_pi();
     int merge_duplicate_gates();
     std::string const_propagate(const std::string& mode, const std::string& gate_type_filter, const std::string& const_value_filter);
     std::string list_pio();

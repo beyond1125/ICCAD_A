@@ -112,6 +112,18 @@ int main(int argc, char** argv) {
         if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
         std::cout << "Added " << n << " dedicated buffer(s) on signal " << args["--signal"]
                   << " (one per load)." << std::endl;
+    } else if (action == "list_gates_by_type") {
+        std::cout << g.list_gates_by_type(args["--gate"]) << std::endl;
+    } else if (action == "flipflops_by_clock") {
+        std::cout << g.flipflops_by_clock(args["--clock"]) << std::endl;
+    } else if (action == "max_pi_to_dff_depth") {
+        std::cout << g.max_pi_to_dff_depth() << std::endl;
+    } else if (action == "list_floating") {
+        std::cout << g.list_floating() << std::endl;
+    } else if (action == "signal_depends_on") {
+        std::cout << g.signal_depends_on(args["--target"], args["--source"]) << std::endl;
+    } else if (action == "highest_fanout_pi") {
+        std::cout << g.highest_fanout_pi() << std::endl;
     } else if (action == "merge_dup") {
         int n = g.merge_duplicate_gates();
         if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
