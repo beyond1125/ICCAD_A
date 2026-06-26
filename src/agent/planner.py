@@ -256,15 +256,28 @@ class Planner:
             try:
                 obj = json.loads(result)
                 compact: dict = {"notice": notice, "saved_to_file": log_path}
+                key_stats: dict = {}
                 for k, v in obj.items():
-                    if isinstance(v, (str, int, float, bool)) or v is None:
+                    if isinstance(v, (int, float, bool)) or v is None:
                         compact[k] = v
+                        key_stats[k] = v
+                    elif isinstance(v, str):
+                        compact[k] = v
+                        if len(v) < 100:
+                            key_stats[k] = v
                     elif isinstance(v, list):
                         compact[f"{k}_count"] = len(v)
                         compact[f"{k}_sample"] = v[:3]
-                    elif isinstance(v, dict) and len(json.dumps(v)) < 500:
+                        key_stats[f"{k}_count"] = len(v)
+                    elif isinstance(v, dict) and len(json.dumps(v)) < 200:
                         compact[k] = v
-                return json.dumps(compact, ensure_ascii=False, indent=2)
+                        key_stats[k] = v
+                    elif isinstance(v, dict):
+                        compact[k] = v
+                stats_line = "KEY STATS: " + ", ".join(
+                    f"{k}={json.dumps(v)}" for k, v in key_stats.items()
+                )
+                return stats_line + "\n" + json.dumps(compact, ensure_ascii=False, indent=2)
             except (json.JSONDecodeError, TypeError):
                 pass
 
