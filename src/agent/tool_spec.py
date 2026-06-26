@@ -280,6 +280,93 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "list_gates_by_type",
+            "description": (
+                "List every gate of a given type with its input and output signals. "
+                "Call this for 'list all NAND gates with their input and output signals' "
+                "or 'list all XOR gates in this design'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"gate_type": {"type": "string", "description": "Gate type, e.g. 'NAND', 'XOR'."}},
+                "required": ["gate_type"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "flipflops_by_clock",
+            "description": (
+                "List all flip-flops driven by a given clock signal. Call this for "
+                "'list all flip-flops driven by clock n0'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"clock": {"type": "string", "description": "Clock signal name, e.g. 'n0'."}},
+                "required": ["clock"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "max_pi_to_dff_depth",
+            "description": (
+                "Compute the maximum combinational logic depth from any primary input "
+                "to any flip-flop D pin. Call this for 'what is the maximum logic depth "
+                "from any primary input to any DFF D-pin in this design'."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_floating",
+            "description": (
+                "Report floating signals: primary inputs that drive nothing, primary "
+                "outputs with no driver, and internal signals that are read but never "
+                "driven. Call this for 'check if there are any floating inputs or "
+                "unconnected output ports' or 'how many floating signals were found'."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "signal_depends_on",
+            "description": (
+                "Determine whether a target node depends on a source node (the source "
+                "is in the target's transitive fanin). Call this for 'does output n8 "
+                "depend on input n1?'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string", "description": "Target node (e.g. output 'n8')."},
+                    "source": {"type": "string", "description": "Source node (e.g. input 'n1')."},
+                },
+                "required": ["target", "source"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "highest_fanout_pi",
+            "description": (
+                "Find the primary input with the highest fanout (including clock/reset "
+                "control-pin loads). Call this for 'which primary input has the highest "
+                "fanout in this design'."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_nodes",
             "description": (
                 "List all signal and gate nodes present in the currently loaded design."
