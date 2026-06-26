@@ -305,6 +305,45 @@ class EDAEngine:
             self._max_fanout_constraint = max_fanout
         return res
 
+    def buffer_signal(self, signal: str, max_fanout: int = 4) -> str:
+        """Buffer one named signal (a wire or a primary input such as clock/reset)
+        into a balanced tree so no driver exceeds max_fanout loads.
+
+        Functionally equivalent. Handles 'insert buffers on the reset signal n1 to
+        reduce its fanout to at most 4 loads per driver'.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        work = self._session_path("bufsig")
+        res = self._run_action("buffer_signal", signal=signal, max_fanout=max_fanout, out=work)
+        if "Inserted" in res and os.path.isfile(work):
+            self._loaded_filepath = work
+        return res
+
+    def reconnect_pin(self, gate: str, pin: str, signal: str) -> str:
+        """Reconnect one input pin of a gate to a different signal, but only if it
+        preserves functionality (verified by equivalence check; reverted otherwise).
+
+        Handles 'try to reconnect input pin A of gate g0 to internal signal n24[0].
+        Ensure the design functionality does not change'.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        prev = self._loaded_filepath
+        work = self._session_path("reconn")
+        res = self._run_action("reconnect_pin", gate=gate, pin=pin, signal=signal, out=work)
+        if not res.startswith("Reconnected") or not os.path.isfile(work):
+            return res
+        self._loaded_filepath = work
+        eq = self.check_equivalence()
+        if eq.startswith("EQUIVALENT"):
+            return res + " Functionality preserved (verified equivalent)."
+        self._loaded_filepath = prev  # revert: the reconnection would change function
+        return (
+            f"Reconnecting pin {pin} of {gate} to {signal} would change the design's "
+            f"functionality, so it was not applied (reverted to preserve equivalence)."
+        )
+
     def insert_dedicated_buffers(self, signal: str) -> str:
         """Insert a dedicated BUF gate for each load of a signal (signal -> buf -> load).
 

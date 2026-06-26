@@ -325,6 +325,48 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "buffer_signal",
+            "description": (
+                "Insert a balanced buffer tree on ONE named signal (a wire, or a "
+                "primary input such as a clock or reset) so no single driver of it "
+                "exceeds a maximum fanout. Functionality is preserved. Call this for "
+                "'insert buffers on the reset signal n1 to reduce its fanout to at most "
+                "4 loads per driver'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "signal": {"type": "string", "description": "Signal to buffer (e.g. 'n1')."},
+                    "max_fanout": {"type": "integer", "description": "Max loads per driver (e.g. 4)."},
+                },
+                "required": ["signal", "max_fanout"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "reconnect_pin",
+            "description": (
+                "Reconnect one input pin of a gate to a different signal, applied only "
+                "if it preserves functionality (verified by equivalence check; reverted "
+                "otherwise). Call this for 'try to reconnect input pin A of gate g0 to "
+                "internal signal n24[0], ensure functionality does not change'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "gate": {"type": "string", "description": "Gate instance name (e.g. 'g0')."},
+                    "pin": {"type": "string", "description": "Input pin, a letter (A=first input, B=second) or index."},
+                    "signal": {"type": "string", "description": "Signal to connect the pin to (e.g. 'n24[0]')."},
+                },
+                "required": ["gate", "pin", "signal"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "reduce_depth",
             "description": (
                 "Reduce the critical-path / maximum logic depth of the design by "

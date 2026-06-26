@@ -2,6 +2,7 @@
 #include <sstream>
 #include <algorithm>
 #include <fstream>
+#include <cctype>
 
 Graph::~Graph() {
     for (auto node : all_nodes) {
@@ -572,6 +573,74 @@ int Graph::insert_buffers(int max_fanout) {
         for (auto& sk : pending) assign(sk, s);
     }
     return buf_count;
+}
+
+// Buffer ONE named signal (a wire or even a primary input such as a clock/reset)
+// into a balanced tree so no driver of it exceeds max_fanout loads. Returns buffers added.
+int Graph::insert_buffers_on_signal(const std::string& signal, int max_fanout) {
+    if (max_fanout < 2 || !nodes.count(signal)) return 0;
+    Node* s = nodes[signal];
+    int buf_count = 0, name_ctr = 0;
+    auto fresh = [&](const std::string& pfx) { std::string nm; do { nm = pfx + std::to_string(name_ctr++); } while (nodes.count(nm)); return nm; };
+    // kind 0 = gate input edge (consumer,pin); 1 = DFF control pin (consumer=DFF,
+    // pin = pin_conns index; clock/reset/set drive these by name, not by edge);
+    // 2 = a buffer's single input.
+    struct Sink { Node* consumer; int pin; int kind; };
+    std::vector<Sink> pending; std::unordered_map<Node*, bool> seen;
+    for (Node* c : s->outputs) {
+        if (seen[c]) continue;
+        seen[c] = true;
+        for (int i = 0; i < (int)c->inputs.size(); ++i) if (c->inputs[i] == s) pending.push_back({c, i, 0});
+    }
+    for (Node* n : all_nodes)
+        if (n->type == NodeType::GATE && n->gate_type == GateType::DFF)
+            for (int i = 0; i < (int)n->pin_conns.size(); ++i) {
+                const PinConn& pc = n->pin_conns[i];
+                if (!pc.is_const && pc.edge_dir == 0 && pc.signal == signal) pending.push_back({n, i, 1});
+            }
+    if ((int)pending.size() <= max_fanout) return 0;
+    s->outputs.clear();
+    auto assign = [&](const Sink& sk, Node* src) {
+        if (sk.kind == 1) sk.consumer->pin_conns[sk.pin].signal = src->name;   // control pin
+        else { if (sk.kind == 2) sk.consumer->inputs.assign(1, src);
+               else sk.consumer->inputs[sk.pin] = src;
+               src->outputs.push_back(sk.consumer); }
+    };
+    while ((int)pending.size() > max_fanout) {
+        std::vector<Sink> next;
+        for (size_t i = 0; i < pending.size(); i += max_fanout) {
+            size_t end = std::min(i + (size_t)max_fanout, pending.size());
+            if (end - i == 1) { next.push_back(pending[i]); continue; }
+            Node* buf = get_or_create_node(fresh("buf_fo_"), NodeType::GATE); buf->gate_type = GateType::BUF;
+            Node* w = get_or_create_node(fresh("nbuf_"), NodeType::SIGNAL); add_edge(buf, w); buf_count++;
+            for (size_t j = i; j < end; ++j) assign(pending[j], w);
+            next.push_back({buf, -1, 2});
+        }
+        pending.swap(next);
+    }
+    for (auto& sk : pending) assign(sk, s);
+    return buf_count;
+}
+
+// Reconnect one input pin of a gate to a different signal. Pin may be a letter
+// (A=input 0, B=1, …) or an index. This can change functionality, so the caller
+// must verify equivalence afterward. Returns false if the gate/pin is invalid.
+bool Graph::reconnect_pin(const std::string& gate, const std::string& pin, const std::string& signal) {
+    if (!nodes.count(gate)) return false;
+    Node* g = nodes[gate];
+    if (g->type != NodeType::GATE) return false;
+    int idx = -1;
+    if (pin.size() == 1 && std::isalpha((unsigned char)pin[0])) idx = std::toupper((unsigned char)pin[0]) - 'A';
+    else { try { idx = std::stoi(pin); } catch (...) { idx = -1; } }
+    if (idx < 0 || idx >= (int)g->inputs.size()) return false;
+    Node* newsig = get_or_create_node(signal, NodeType::SIGNAL);
+    Node* old = g->inputs[idx];
+    if (old == newsig) return true;
+    auto it = std::find(old->outputs.begin(), old->outputs.end(), g);
+    if (it != old->outputs.end()) old->outputs.erase(it);
+    g->inputs[idx] = newsig;
+    newsig->outputs.push_back(g);
+    return true;
 }
 
 int Graph::sweep_dangling() {

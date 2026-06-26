@@ -41,6 +41,8 @@ public:
     void write_blif(const std::string& filename);
     int insert_buffers(int max_fanout);
     int insert_dedicated_buffers(const std::string& signal);
+    int insert_buffers_on_signal(const std::string& signal, int max_fanout);
+    bool reconnect_pin(const std::string& gate, const std::string& pin, const std::string& signal);
     int sweep_dangling();
     std::unordered_set<Node*> fanin_cone_gates(const std::string& root);
     int decompose_in_cone(const std::string& root, const std::string& from_type, const std::string& basis);

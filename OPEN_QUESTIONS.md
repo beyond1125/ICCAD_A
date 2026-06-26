@@ -167,3 +167,11 @@ From test31 onward the testcases are analysis-heavy. The transform parts are don
 | 27 | D5, O1 (+ XOR→AND/OR/NOT decomposition, "outputs with depth>4") |
 | 28–30 | D2, D5, O4, O5 |
 | 31–40 | O1, O2, O3, O5, O6 (analysis + transform mix) |
+
+### O7 — Reset/clock buffer trees use pin_conn refs, not edges ⚠️
+`buffer_signal` on a reset/clock connects its leaf buffers to DFF control pins
+(`.RN/.CK/.SN`) via the pin_conn *name* reference, not a graph edge (DFF control pins
+aren't modeled as edges). So a later `remove_dangling` would treat those buffers as dead
+and sweep them. Safe for test34/36/38 (no sweep runs after the reset/clock buffering), but
+flagged. Proper fix: model control pins as edges, or make `sweep_dangling` keep gates
+referenced by DFF pin_conns. cec is unaffected (control pins aren't in the flop-cut logic).

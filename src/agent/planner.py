@@ -90,6 +90,8 @@ class Planner:
             "count_fanin_gates": engine.count_fanin_gates,
             "insert_buffers": engine.insert_buffers,
             "insert_dedicated_buffers": engine.insert_dedicated_buffers,
+            "buffer_signal": engine.buffer_signal,
+            "reconnect_pin": engine.reconnect_pin,
             "reduce_depth": engine.reduce_depth,
             "remove_dangling": engine.remove_dangling,
             "rename_node": engine.rename_node,

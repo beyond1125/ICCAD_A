@@ -95,6 +95,18 @@ int main(int argc, char** argv) {
     } else if (action == "outputs_over_depth") {
         int mx = args.count("--max") ? std::stoi(args["--max"]) : 4;
         std::cout << g.outputs_over_depth(mx) << std::endl;
+    } else if (action == "buffer_signal") {
+        int mf = args.count("--max_fanout") ? std::stoi(args["--max_fanout"]) : 4;
+        int n = g.insert_buffers_on_signal(args["--signal"], mf);
+        if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
+        std::cout << "Inserted " << n << " buffer(s) on signal " << args["--signal"]
+                  << " so no driver exceeds " << mf << " loads." << std::endl;
+    } else if (action == "reconnect_pin") {
+        bool ok = g.reconnect_pin(args["--gate"], args["--pin"], args["--signal"]);
+        if (ok && args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
+        std::cout << (ok ? "Reconnected pin " + args["--pin"] + " of " + args["--gate"] +
+                           " to " + args["--signal"] + "."
+                         : "Failure: gate or pin not found.") << std::endl;
     } else if (action == "dedicated_buffers") {
         int n = g.insert_dedicated_buffers(args["--signal"]);
         if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
