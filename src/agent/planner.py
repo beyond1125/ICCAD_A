@@ -71,9 +71,12 @@ _SYSTEM_PROMPT = (
 class Planner:
     """Drives the LLM tool-calling loop and executes tool calls on the EDA engine."""
 
+    _MAX_HISTORY_CHARS = 40000  # ~10k tokens budget for conversation history
+
     def __init__(self, config: Config, engine: EDAEngine) -> None:
         self._engine = engine
         self._llm = LLMClient(config, EDA_TOOLS)
+        self._conversation_history: List[Dict[str, str]] = []
 
         # Map every tool name to the corresponding engine method.
         # Extend this dict when new tools are added to tool_spec.py.
@@ -118,8 +121,9 @@ class Planner:
     # ------------------------------------------------------------------ public
 
     def reset(self) -> None:
-        """Clear EDA engine state for a new testcase."""
+        """Clear EDA engine state and conversation history for a new testcase."""
         self._engine.reset()
+        self._conversation_history = []
 
     def _build_system_prompt(self) -> str:
         """Include live EDA engine state so follow-up requests see loaded designs."""
@@ -133,6 +137,28 @@ class Planner:
             state = "No design is currently loaded."
         return f"{_SYSTEM_PROMPT}\n\nCurrent session state: {state}"
 
+    def _trimmed_history(self) -> List[Dict[str, str]]:
+        """Return conversation history trimmed to fit the token budget.
+
+        Always keeps the most recent 3 turns (6 messages). Drops oldest
+        turns first until total character count is within budget.
+        """
+        hist = self._conversation_history
+        if not hist:
+            return []
+        # Each turn = 2 messages (user + assistant)
+        keep_recent = min(len(hist), 6)  # 3 turns = 6 messages
+        total = sum(len(m["content"]) for m in hist)
+        if total <= self._MAX_HISTORY_CHARS:
+            return list(hist)
+        # Drop oldest turns (pairs of 2) until budget met, but keep recent 3
+        trimmed = list(hist)
+        while (len(trimmed) > keep_recent
+               and sum(len(m["content"]) for m in trimmed) > self._MAX_HISTORY_CHARS):
+            trimmed.pop(0)
+            trimmed.pop(0)
+        return trimmed
+
     def process(self, user_request: str) -> str:
         """Process one natural-language request and return the response text.
 
@@ -144,15 +170,19 @@ class Planner:
         """
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": self._build_system_prompt()},
-            {"role": "user",   "content": user_request},
         ]
+        messages.extend(self._trimmed_history())
+        messages.append({"role": "user", "content": user_request})
 
         for iteration in range(_MAX_ITERATIONS):
             try:
                 response = self._llm.chat(messages)
             except Exception as exc:
                 logger.error("LLM API error (iteration %d): %s", iteration, exc)
-                return f"Error communicating with the LLM service: {exc}"
+                answer = f"Error communicating with the LLM service: {exc}"
+                self._conversation_history.append({"role": "user", "content": user_request})
+                self._conversation_history.append({"role": "assistant", "content": answer})
+                return answer
 
             if response.tool_calls:
                 # Append the assistant's tool-request turn to history.
@@ -170,16 +200,20 @@ class Planner:
                     )
 
             elif response.text is not None:
-                return response.text.strip() or "(No response generated.)"
+                answer = response.text.strip() or "(No response generated.)"
+                self._conversation_history.append({"role": "user", "content": user_request})
+                self._conversation_history.append({"role": "assistant", "content": answer})
+                return answer
 
             else:
                 # Unexpected state: no text and no tool calls.
                 logger.warning("LLM returned empty response on iteration %d", iteration)
                 break
 
-        return (
-            "I was unable to complete the request within the allowed number of steps."
-        )
+        answer = "I was unable to complete the request within the allowed number of steps."
+        self._conversation_history.append({"role": "user", "content": user_request})
+        self._conversation_history.append({"role": "assistant", "content": answer})
+        return answer
 
     # ----------------------------------------------------------------- private
 
