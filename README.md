@@ -70,6 +70,16 @@ cd tools && git clone https://github.com/berkeley-abc/abc.git
 cd abc && make
 ```
 
+## Usage
+
+Pipe a prompt file into `main.py` to run a single testcase interactively:
+
+```bash
+cat testcase/test02/prompt.txt | python3 main.py -config config.yaml
+```
+
+Output is written to `testcase/test02/test02.log`.
+
 ## Running Tests
 
 ```bash
