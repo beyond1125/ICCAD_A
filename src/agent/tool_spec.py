@@ -214,6 +214,32 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "count_gates_in_cone",
+            "description": (
+                "Count gates by type within the fanin or fanout cone of a specified node. "
+                "Returns per-type breakdown (AND, OR, NOT, NAND, NOR, XOR, XNOR, BUF, DFF) "
+                "and total count."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_name": {
+                        "type": "string",
+                        "description": "The cone root node (signal or gate name).",
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["fanin", "fanout"],
+                        "description": "Whether to traverse the fanin or fanout cone (default: fanin).",
+                    },
+                },
+                "required": ["node_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_fanin_depth",
             "description": (
                 "Compute the maximum combinational logic depth within the "

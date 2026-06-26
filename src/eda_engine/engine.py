@@ -251,6 +251,10 @@ class EDAEngine:
         """Return all nodes in the transitive fanout cone of a specific node."""
         return self._run_action("get_fanout_cone", node=node_name)
 
+    def count_gates_in_cone(self, node_name: str, direction: str = "fanin") -> str:
+        """Count gates by type within the fanin or fanout cone of a node."""
+        return self._run_action("count_gates_in_cone", node=node_name, direction=direction)
+
     def get_fanin_depth(self, node_name: str) -> str:
         """Calculate the maximum logic depth within the fanin cone of a node."""
         return self._run_action("get_fanin_depth", node=node_name)

@@ -5,6 +5,7 @@
 #include <iostream>
 #include <string>
 #include <unordered_map>
+#include <queue>
 
 int main(int argc, char** argv) {
     std::unordered_map<std::string, std::string> args;
@@ -204,6 +205,47 @@ int main(int argc, char** argv) {
         for (auto t : types) {
             std::cout << gate_type_to_string(t) << ": " << counts[t] << "\n";
         }
+    } else if (action == "count_gates_in_cone") {
+        if (!args.count("--node")) { std::cout << "Error: --node required\n"; return 1; }
+        std::string dir = args.count("--direction") ? args["--direction"] : "fanin";
+        bool backward = (dir != "fanout");
+        if (g.nodes.find(args["--node"]) == g.nodes.end()) {
+            std::cout << "Error: Node not found.\n"; return 1;
+        }
+        // BFS cone traversal
+        std::unordered_set<Node*> visited;
+        std::queue<Node*> bfsq;
+        bfsq.push(g.nodes[args["--node"]]);
+        while (!bfsq.empty()) {
+            Node* cur = bfsq.front(); bfsq.pop();
+            if (visited.count(cur)) continue;
+            visited.insert(cur);
+            const auto& nexts = backward ? cur->inputs : cur->outputs;
+            for (auto n : nexts) if (!visited.count(n)) bfsq.push(n);
+        }
+        std::unordered_map<GateType, int> counts;
+        int total_gates = 0, total_signals = 0;
+        for (auto n : visited) {
+            if (n->type == NodeType::GATE) { counts[n->gate_type]++; total_gates++; }
+            else total_signals++;
+        }
+        std::cout << "{\n";
+        std::cout << "  \"cone_root\": \"" << args["--node"] << "\",\n";
+        std::cout << "  \"direction\": \"" << dir << "\",\n";
+        std::cout << "  \"total_gates\": " << total_gates << ",\n";
+        std::cout << "  \"by_type\": {\n";
+        std::vector<GateType> types = {GateType::NOT, GateType::AND, GateType::OR, GateType::XOR, GateType::NOR, GateType::NAND, GateType::XNOR, GateType::BUF, GateType::DFF};
+        bool first = true;
+        for (auto t : types) {
+            if (counts[t] > 0) {
+                if (!first) std::cout << ",\n";
+                std::cout << "    \"" << gate_type_to_string(t) << "\": " << counts[t];
+                first = false;
+            }
+        }
+        std::cout << "\n  },\n";
+        std::cout << "  \"total_signals\": " << total_signals << "\n";
+        std::cout << "}\n";
     } else if (action == "list_pio") {
         std::cout << g.list_pio() << std::endl;
     } else if (action == "deepest_cone_output") {
