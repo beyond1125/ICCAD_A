@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Contest entry point (spec §3.1): ./cada1066_alpha -config <config_file_path>
+# Thin wrapper so the grader can invoke the agent as a single executable
+# regardless of the caller's working directory.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$SCRIPT_DIR/main.py" "$@"

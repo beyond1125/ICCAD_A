@@ -1,0 +1,11 @@
+.git
+venv
+tools/abc
+verification_runs
+__pycache__
+**/__pycache__
+*.pyc
+.env
+A_20260212.pdf
+testcase/*/*.log
+testcase/*/*_out.v
