@@ -48,6 +48,9 @@ def run_case(n: int, config: str, timeout: int) -> dict:
 
     turns = prompt_turns(prompt)
     out_log = pdir / f"{name}_llm_run.log"
+    out_v = pdir / f"{name}_out.v"
+    # A stale output from an earlier sweep must not count as this run's result.
+    out_v.unlink(missing_ok=True)
     t0 = time.time()
     try:
         with open(prompt, "r") as fin:
@@ -59,9 +62,12 @@ def run_case(n: int, config: str, timeout: int) -> dict:
         secs = time.time() - t0
         out_log.write_text(r.stdout)
         ends = r.stdout.count("#END")
-        wrote_v = (pdir / f"{name}_out.v").is_file()
+        llm_errs = r.stdout.count("Error communicating with the LLM service")
+        wrote_v = out_v.is_file()
         if r.returncode != 0:
             status = "ERR"
+        elif llm_errs:
+            status = "LLM_ERR"      # provider failure (quota/auth/outage)
         elif ends >= turns and wrote_v:
             status = "OK"
         elif ends >= turns:
@@ -100,6 +106,10 @@ def main() -> None:
                (f"; {res['stderr']}" if res.get("stderr") else "") + ")"
         print(f"  {res['name']}: {res['status']:8s} {res['secs']:7.1f}s{note}", flush=True)
         results.append(res)
+        if res["status"] == "LLM_ERR":
+            print("\n[!] LLM service errors (quota/auth/outage) — aborting the "
+                  "sweep; fix the provider account before rerunning.")
+            break
 
     print("\n=== summary ===")
     counts = Counter(r["status"] for r in results)
