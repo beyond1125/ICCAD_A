@@ -20,6 +20,11 @@ import sys
 import tempfile
 from typing import Any, Dict, Optional, List
 
+# Per-action cap on parser subprocess calls. A single unbounded call (e.g.
+# exponential path enumeration) can otherwise eat the whole per-request time
+# limit before the planner's wall-clock budget gets a chance to intervene.
+_ACTION_TIMEOUT_S = 150
+
 
 def _find_parser_binary() -> str:
     """Resolve the C++ parser executable across Linux, macOS, and Windows."""
@@ -96,8 +101,11 @@ class EDAEngine:
         for k, v in kwargs.items():
             cmd.extend([f"--{k}", str(v)])
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True,
+                                    timeout=_ACTION_TIMEOUT_S)
             return result.stdout.strip()
+        except subprocess.TimeoutExpired:
+            return f"Error: '{action}' exceeded the {_ACTION_TIMEOUT_S}s limit and was aborted."
         except subprocess.CalledProcessError as e:
             return f"Error executing {action}: {e.stderr.strip() or e.stdout.strip()}"
         except FileNotFoundError:
@@ -125,8 +133,17 @@ class EDAEngine:
                 cmd.extend([f"--{k}", str(v)])
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True,
+                                    timeout=_ACTION_TIMEOUT_S)
             return result.stdout.strip()
+        except subprocess.TimeoutExpired:
+            # e.g. exponential path enumeration on a huge cone; give the LLM a
+            # result it can react to instead of blowing the request time limit.
+            return (
+                f"Error: '{action}' exceeded the {_ACTION_TIMEOUT_S}s limit and was "
+                f"aborted. The design state is unchanged. The result is too large "
+                f"to compute exhaustively; report this limitation instead of retrying."
+            )
         except subprocess.CalledProcessError as e:
             # Return error output from the parser
             return f"Error executing {action}: {e.stderr.strip() or e.stdout.strip()}"
@@ -437,7 +454,7 @@ class EDAEngine:
         try:
             r = subprocess.run(
                 [self._abc_path, "-q", script],
-                capture_output=True, text=True, timeout=600,
+                capture_output=True, text=True, timeout=180,
             )
         except Exception as exc:  # noqa: BLE001
             return f"Error running ABC depth optimization: {exc}"
@@ -758,7 +775,7 @@ class EDAEngine:
         try:
             r = subprocess.run(
                 [self._abc_path, "-q", f"cec {ref_blif} {cur_blif}"],
-                capture_output=True, text=True, timeout=300,
+                capture_output=True, text=True, timeout=180,
             )
         except Exception as exc:  # noqa: BLE001
             return f"Error running ABC cec: {exc}"

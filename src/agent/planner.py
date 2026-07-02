@@ -37,6 +37,24 @@ _RE_WRITE_INTENT = re.compile(
     r"\b(write|save|output|export|dump)\b.*?\.v\b", re.IGNORECASE | re.DOTALL)
 _RE_V_FILENAME = re.compile(r"([\w./\\-]+\.v)\b")
 
+# The same failure mode exists for transformations: the model reports a
+# completed conversion (with self-computed numbers) without invoking any
+# transform tool. A request that commands a structural change (and is not a
+# question) must execute at least one of these tools before being answered.
+_TRANSFORM_TOOLS = frozenset({
+    "replace_gate", "insert_buffers", "insert_dedicated_buffers",
+    "buffer_signal", "reconnect_pin", "reduce_depth", "remove_dangling",
+    "rename_node", "decompose_gates_in_cone", "decompose_all_gates",
+    "collapse_inverters", "merge_equivalent_gates", "convert_cone_to_basis",
+    "reconstruct_netlist_to_basis", "restructure_to_depth",
+    "optimize_outputs_to_depth", "const_propagate",
+})
+_RE_TRANSFORM_INTENT = re.compile(
+    r"\b(insert|reconstruct|convert|replace|decompose|rewrite|remap|collapse"
+    r"|merge|remove|delete|prune|trim|sweep|rename|simplify|restructure"
+    r"|reduce|eliminate|update the name|change the identifier)\b",
+    re.IGNORECASE)
+
 _SYSTEM_PROMPT = (
     "You are an AI agent for an Electronic Design Automation (EDA) system. "
     "Your job is to help users analyse and transform gate-level Verilog netlists. "
@@ -193,6 +211,11 @@ class Planner:
         t0 = time.time()
         writes_before = len(self._engine.verified_writes)
         wants_write = bool(_RE_WRITE_INTENT.search(user_request))
+        wants_transform = (
+            not user_request.rstrip().endswith("?")
+            and bool(_RE_TRANSFORM_INTENT.search(user_request))
+        )
+        executed_tools: set = set()
         corrections = 0
 
         messages: List[Dict[str, Any]] = [
@@ -226,6 +249,7 @@ class Planner:
                 # Execute every requested tool and append the results.
                 for tc in response.tool_calls:
                     result = self._execute_tool(tc)
+                    executed_tools.add(tc.name)
                     messages.append(
                         {
                             "role": "tool",
@@ -236,27 +260,39 @@ class Planner:
 
             elif response.text is not None:
                 answer = response.text.strip() or "(No response generated.)"
+                correction = None
                 if wants_write and not self._write_satisfied(user_request, writes_before):
+                    correction = (
+                        "No output file has actually been written yet. "
+                        "You MUST call the write_design tool now with the "
+                        "exact output path requested above, then confirm."
+                    )
+                elif not executed_tools:
+                    correction = (
+                        "You answered without calling any tool, so nothing was "
+                        "actually done or measured. Call the appropriate tools "
+                        "to perform the request, then answer from their results."
+                    )
+                elif wants_transform and not (executed_tools & _TRANSFORM_TOOLS):
+                    correction = (
+                        "The requested transformation has NOT been applied: no "
+                        "transform tool was called. Call the appropriate "
+                        "transform tool now, then answer from its result."
+                    )
+                if correction is not None:
                     if corrections < 2:
                         corrections += 1
-                        logger.warning(
-                            "Write gate: answer claimed completion without a "
-                            "verified write_design call (correction %d)", corrections)
+                        logger.warning("Answer gate correction %d: %s",
+                                       corrections, correction.split(".")[0])
                         messages.append({"role": "assistant", "content": answer})
-                        messages.append({
-                            "role": "user",
-                            "content": (
-                                "No output file has actually been written yet. "
-                                "You MUST call the write_design tool now with the "
-                                "exact output path requested above, then confirm."
-                            ),
-                        })
+                        messages.append({"role": "user", "content": correction})
                         answer = None
                         continue
-                    answer = (
-                        "Error: the output file could not be written despite "
-                        "repeated attempts. The design was NOT saved."
-                    )
+                    if wants_write:
+                        answer = (
+                            "Error: the output file could not be written despite "
+                            "repeated attempts. The design was NOT saved."
+                        )
                 break
 
             else:
