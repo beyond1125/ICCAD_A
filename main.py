@@ -70,6 +70,8 @@ def main() -> None:
 
     io_mgr = IOManager()
     engine = EDAEngine()
+    for warning in engine.health_check():
+        print(f"[cada1066] STARTUP WARNING: {warning}", file=sys.stderr)
     planner = Planner(config, engine)
 
     # ── main request loop ─────────────────────────────────────────────────────
@@ -94,7 +96,7 @@ def main() -> None:
                 response = (
                     f'Acknowledged. Initialized testcase "{case_name}". '
                     f'All subsequent responses will be recorded to '
-                    f'testcase/{case_name}/{case_name}.log.\n'
+                    f'{case_name}.log.\n'
                     f'Design state is empty and ready for commands.'
                 )
             else:

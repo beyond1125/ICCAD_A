@@ -82,6 +82,9 @@ class EDAEngine:
         # restructuring (reduce_depth) dissolves buffers, so we remember the limit
         # and re-enforce it automatically after such transforms.
         self._max_fanout_constraint: Optional[int] = None
+        # Absolute paths of every write verified on disk. The planner checks this
+        # to refuse answering a write request when no file was actually produced.
+        self.verified_writes: List[str] = []
 
     def _session_path(self, tag: str, ext: str = "v") -> str:
         self._xform_seq += 1
@@ -304,12 +307,23 @@ class EDAEngine:
         If a maximum-fanout constraint was requested earlier, it is re-enforced
         here so the final written netlist always satisfies it, even if later
         transforms (cone conversion, inverter collapse) reintroduced high fanout.
+
+        The written file is verified on disk before success is reported; every
+        verified write is recorded so the planner can refuse to answer a write
+        request for which no file was actually produced.
         """
         if self._max_fanout_constraint is not None:
             self.insert_buffers(self._max_fanout_constraint)
         res = self._run_action("write", out=filepath)
         if "Success" in res:
-            return f"Design written to {filepath}."
+            if not os.path.isfile(filepath):
+                return (
+                    f"Error: the parser reported success but no file exists at "
+                    f"{filepath}. The design was NOT written."
+                )
+            self.verified_writes.append(os.path.abspath(filepath))
+            size = os.path.getsize(filepath)
+            return f"Design written to {filepath} ({size} bytes, verified on disk)."
         return res
 
     def count_gates(self) -> str:
@@ -764,11 +778,29 @@ class EDAEngine:
             )
         return f"Equivalence check inconclusive. ABC output: {out[:400]}"
 
+    def health_check(self) -> List[str]:
+        """Return human-readable warnings for missing runtime dependencies.
+
+        Called once at startup so a clean environment fails loudly on stderr
+        instead of silently degrading every equivalence/depth request.
+        """
+        warnings = []
+        if not os.path.isfile(self._parser_path):
+            warnings.append(
+                f"parser binary not found at {self._parser_path} — run "
+                "'python3 scripts/build_parser.py' (ALL requests will fail)")
+        if not os.path.isfile(self._abc_path):
+            warnings.append(
+                f"ABC binary not found at {self._abc_path} — build tools/abc or "
+                "set ABC_BIN (depth optimization and equivalence checks will fail)")
+        return warnings
+
     def reset(self) -> None:
         """Clear state."""
         self._loaded_filepath = None
         self._original_filepath = None
         self._max_fanout_constraint = None
+        self.verified_writes = []
 
     @property
     def is_design_loaded(self) -> bool:

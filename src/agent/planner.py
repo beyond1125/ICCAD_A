@@ -17,7 +17,8 @@ import logging
 import os
 import re
 import sys
-from typing import Any, Callable, Dict, List
+import time
+from typing import Any, Callable, Dict, List, Optional
 
 from utils.config import Config
 from eda_engine.engine import EDAEngine
@@ -27,6 +28,14 @@ from agent.tool_spec import EDA_TOOLS
 logger = logging.getLogger(__name__)
 
 _MAX_ITERATIONS = 10   # max LLM round-trips per user request
+_REQUEST_BUDGET_S = 270  # wall-clock budget per request (spec limit: 300s)
+
+# Requests that ask for a netlist to be written. Small models sometimes answer
+# such a request with a fabricated "saved successfully" WITHOUT calling
+# write_design; the gate below forces the tool call before accepting an answer.
+_RE_WRITE_INTENT = re.compile(
+    r"\b(write|save|output|export|dump)\b.*?\.v\b", re.IGNORECASE | re.DOTALL)
+_RE_V_FILENAME = re.compile(r"([\w./\\-]+\.v)\b")
 
 _SYSTEM_PROMPT = (
     "You are an AI agent for an Electronic Design Automation (EDA) system. "
@@ -173,22 +182,42 @@ class Planner:
 
         Returns:
             A plain-text response suitable for wrapping in #RESPONSE/#END tags.
+
+        Two guards wrap the LLM loop:
+        - a wall-clock budget so a runaway tool/LLM chain still answers (and
+          emits #END) inside the contest's per-request time limit;
+        - a write gate: if the request asks for a netlist file and the LLM
+          answers without a verified write_design call, it is corrected and
+          re-prompted instead of being allowed to fabricate success.
         """
+        t0 = time.time()
+        writes_before = len(self._engine.verified_writes)
+        wants_write = bool(_RE_WRITE_INTENT.search(user_request))
+        corrections = 0
+
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": self._build_system_prompt()},
         ]
         messages.extend(self._trimmed_history())
         messages.append({"role": "user", "content": user_request})
 
+        answer: Optional[str] = None
         for iteration in range(_MAX_ITERATIONS):
+            if time.time() - t0 > _REQUEST_BUDGET_S:
+                logger.warning("Request budget (%ds) exhausted", _REQUEST_BUDGET_S)
+                answer = (
+                    "The request could not be fully completed within the time "
+                    "budget. Any transformations already applied remain in the "
+                    "current design state."
+                )
+                break
+
             try:
                 response = self._llm.chat(messages)
             except Exception as exc:
                 logger.error("LLM API error (iteration %d): %s", iteration, exc)
                 answer = f"Error communicating with the LLM service: {exc}"
-                self._conversation_history.append({"role": "user", "content": user_request})
-                self._conversation_history.append({"role": "assistant", "content": answer})
-                return answer
+                break
 
             if response.tool_calls:
                 # Append the assistant's tool-request turn to history.
@@ -207,19 +236,52 @@ class Planner:
 
             elif response.text is not None:
                 answer = response.text.strip() or "(No response generated.)"
-                self._conversation_history.append({"role": "user", "content": user_request})
-                self._conversation_history.append({"role": "assistant", "content": answer})
-                return answer
+                if wants_write and not self._write_satisfied(user_request, writes_before):
+                    if corrections < 2:
+                        corrections += 1
+                        logger.warning(
+                            "Write gate: answer claimed completion without a "
+                            "verified write_design call (correction %d)", corrections)
+                        messages.append({"role": "assistant", "content": answer})
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "No output file has actually been written yet. "
+                                "You MUST call the write_design tool now with the "
+                                "exact output path requested above, then confirm."
+                            ),
+                        })
+                        answer = None
+                        continue
+                    answer = (
+                        "Error: the output file could not be written despite "
+                        "repeated attempts. The design was NOT saved."
+                    )
+                break
 
             else:
                 # Unexpected state: no text and no tool calls.
                 logger.warning("LLM returned empty response on iteration %d", iteration)
                 break
 
-        answer = "I was unable to complete the request within the allowed number of steps."
+        if answer is None:
+            answer = "I was unable to complete the request within the allowed number of steps."
         self._conversation_history.append({"role": "user", "content": user_request})
         self._conversation_history.append({"role": "assistant", "content": answer})
         return answer
+
+    def _write_satisfied(self, user_request: str, writes_before: int) -> bool:
+        """True if a verified write happened during this request that plausibly
+        matches the file named in the request (basename comparison; any verified
+        write counts when the request names no .v file)."""
+        new_writes = self._engine.verified_writes[writes_before:]
+        if not new_writes:
+            return False
+        wanted = [os.path.basename(m) for m in _RE_V_FILENAME.findall(user_request)]
+        if not wanted:
+            return True
+        written = {os.path.basename(p) for p in new_writes}
+        return any(w in written for w in wanted)
 
     # ----------------------------------------------------------------- private
 
