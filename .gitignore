@@ -5,6 +5,7 @@
 *.log
 *_out.v
 verification_runs/
+docs/archive/*.tar.gz
 parser/parser_cpp
 parser/parser_cpp.exe
 src/eda_engine/parser/parser_cpp
@@ -29,3 +30,6 @@ config.yaml.local.bak
 tools/abc
 /abc/
 venv
+
+# Claude Code local overrides (personal, not shared)
+.claude/settings.local.json

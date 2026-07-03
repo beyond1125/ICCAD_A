@@ -129,4 +129,4 @@ python3 scripts/eval_harness.py --case 12
 python3 scripts/eval_harness.py --skip-paths      # skip the slower tool path checks
 ```
 
-See `EVAL_HARNESS.md` for further discussion of the harness's design.
+See `docs/EVAL_HARNESS.md` for further discussion of the harness's design.
