@@ -113,6 +113,15 @@ def main() -> None:
         pass
     finally:
         io_mgr.close()
+        # Emit token usage to stderr (keeps stdout's #RESPONSE stream clean) so
+        # batch runners can report per-run cost.
+        llm = getattr(planner, "_llm", None)
+        if llm is not None:
+            print(
+                f"[TOKENS] prompt={llm.prompt_tokens} completion={llm.completion_tokens} "
+                f"total={llm.total_tokens} api_calls={llm.api_calls}",
+                file=sys.stderr, flush=True,
+            )
 
 
 if __name__ == "__main__":
