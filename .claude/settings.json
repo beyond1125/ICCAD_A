@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 scripts/*)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(./cada1066_alpha *)"
+    ],
+    "deny": [
+      "Bash(sudo *)",
+      "Read(./.env)",
+      "Read(./venv/**)"
+    ]
+  }
+}
