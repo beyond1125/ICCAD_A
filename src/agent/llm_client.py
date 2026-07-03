@@ -52,6 +52,11 @@ class LLMClient:
         self._config = config
         self._tools = tools
         self._provider = config.provider.lower()
+        # Running token usage across all API calls made by this client.
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.total_tokens = 0
+        self.api_calls = 0
 
         if self._provider == "openai":
             from openai import OpenAI  # type: ignore
@@ -63,6 +68,21 @@ class LLMClient:
             raise ValueError(
                 f"Unknown provider '{config.provider}'. Expected 'openai' or 'anthropic'."
             )
+
+    def _record_usage(self, usage) -> None:
+        """Accumulate token usage from a provider response (OpenAI or Anthropic)."""
+        self.api_calls += 1
+        if not usage:
+            return
+        p = getattr(usage, "prompt_tokens", None)
+        if p is None:
+            p = getattr(usage, "input_tokens", 0)
+        c = getattr(usage, "completion_tokens", None)
+        if c is None:
+            c = getattr(usage, "output_tokens", 0)
+        self.prompt_tokens += p or 0
+        self.completion_tokens += c or 0
+        self.total_tokens += getattr(usage, "total_tokens", (p or 0) + (c or 0))
 
     # ------------------------------------------------------------------ public
 
@@ -89,6 +109,7 @@ class LLMClient:
             temperature=cfg.generation.temperature,
             max_tokens=cfg.generation.max_output_tokens,
         )
+        self._record_usage(getattr(response, "usage", None))
 
         choice = response.choices[0]
         msg = choice.message
@@ -163,6 +184,7 @@ class LLMClient:
 
         logger.debug("--- [Anthropic] Sending request with %d messages ---", len(anthropic_msgs))
         response = self._anthropic_client.messages.create(**kwargs)
+        self._record_usage(getattr(response, "usage", None))
 
         text_parts: List[str] = []
         tool_calls: List[ToolCall] = []

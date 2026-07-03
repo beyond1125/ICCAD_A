@@ -25,6 +25,7 @@ Outputs (per case, under testcase/testNN/):
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 import time
@@ -59,6 +60,9 @@ def run_case(n: int, config: str, timeout: int) -> dict:
         secs = time.time() - t0
         out_log.write_text(r.stdout)
         ends = r.stdout.count("#END")
+        tk = re.search(r"\[TOKENS\].*?total=(\d+).*?api_calls=(\d+)", r.stderr)
+        tokens = int(tk.group(1)) if tk else 0
+        calls = int(tk.group(2)) if tk else 0
         wrote_v = (pdir / f"{name}_out.v").is_file()
         # Detect LLM/API failures that still produce #END (e.g. a 401 bad key makes
         # every turn return an error message), so we don't falsely report success.
@@ -81,13 +85,13 @@ def run_case(n: int, config: str, timeout: int) -> dict:
             line = next((l for l in blob.splitlines() if "API error" in l), "")
             msg = line.strip()[:160] or msg
         return {"name": name, "status": status, "secs": secs, "ends": ends,
-                "turns": turns, "stderr": msg[:200]}
+                "turns": turns, "tokens": tokens, "calls": calls, "stderr": msg[:200]}
     except subprocess.TimeoutExpired:
         return {"name": name, "status": "TIMEOUT", "secs": time.time() - t0,
-                "ends": 0, "turns": turns, "stderr": ""}
+                "ends": 0, "turns": turns, "tokens": 0, "calls": 0, "stderr": ""}
     except Exception as exc:  # noqa: BLE001
         return {"name": name, "status": "CRASH", "secs": time.time() - t0,
-                "ends": 0, "turns": turns, "stderr": str(exc)[:200]}
+                "ends": 0, "turns": turns, "tokens": 0, "calls": 0, "stderr": str(exc)[:200]}
 
 
 def main() -> None:
@@ -110,14 +114,18 @@ def main() -> None:
         note = "" if res["status"] in ("OK", "MISSING") else \
                f"  ({res['ends']}/{res['turns']} turns" + \
                (f"; {res['stderr']}" if res.get("stderr") else "") + ")"
-        print(f"  {res['name']}: {res['status']:8s} {res['secs']:7.1f}s{note}", flush=True)
+        tok = f"  {res.get('tokens', 0):>7d} tok/{res.get('calls', 0)} calls"
+        print(f"  {res['name']}: {res['status']:8s} {res['secs']:7.1f}s{tok}{note}", flush=True)
         results.append(res)
 
     print("\n=== summary ===")
     counts = Counter(r["status"] for r in results)
     total = sum(r["secs"] for r in results)
+    toks = sum(r.get("tokens", 0) for r in results)
+    calls = sum(r.get("calls", 0) for r in results)
     print(" ".join(f"{k}={v}" for k, v in sorted(counts.items())),
-          f"| total {total:.0f}s ({total/60:.1f} min)")
+          f"| total {total:.0f}s ({total/60:.1f} min)"
+          f" | {toks:,} tokens, {calls} API calls")
     ok = all(r["status"] in ("OK", "OK*") for r in results)
     sys.exit(0 if ok else 1)
 
