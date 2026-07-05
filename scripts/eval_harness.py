@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Ground-truth-free evaluation harness.
 
-Scores the system with NO external answer key, using three self-generated sources
+Scores the system with NO external answer key, using four self-generated sources
 of truth:
 
   1. EQUIVALENCE  — ABC `cec` proves each testNN_out.v is functionally equivalent
@@ -13,6 +13,11 @@ of truth:
                     existence. Agreement = confidence; disagreement = a real bug.
                     A tool timeout where the oracle answers instantly is itself a
                     finding (e.g. path enumeration that does not scale).
+  4. GOAL         — structural transform-goal predicates (goal_check.py): does the
+                    output actually ACHIEVE each prompt instruction? Equivalence is
+                    necessary but not sufficient — a no-op transform is equivalent
+                    yet does nothing. The combined verdict is PASS = equiv AND goal;
+                    an equivalent output that misses a goal is reported GOAL-FAIL.
 
 Usage:
     python3 scripts/eval_harness.py                 # every testcase found
@@ -181,8 +186,39 @@ def path_queries(prompt: Path):
         yield s, e, (av.group(1) if av else "")
 
 
+# ── transform-goal axis (see goal_check.py) ───────────────────────────────────
+def evaluate_goals(net, orig: Path, outnet, out: Path, prompt: Path) -> dict | None:
+    """Run the structural transform-goal predicates on this case; None if unavailable.
+
+    Reuses the netlists this harness already parsed. Returns per-case goal tallies so the
+    combined verdict can require goal-achieved on top of equivalence (a no-op transform is
+    equivalent but fails its goal).
+    """
+    try:
+        import goal_check as gk
+    except Exception:
+        return None
+    gk.augment_control_nets(net, orig)
+    gk.augment_control_nets(outnet, out)
+    goals, unclassified = gk.classify_prompt(prompt)
+    results = []
+    for g in goals:
+        try:
+            met, detail = g.check(net, outnet)
+        except Exception as e:                       # a predicate bug must not abort scoring
+            met, detail = None, f"check error: {e}"
+        results.append((g.kind, met, detail))
+    scored = [(k, m, d) for k, m, d in results if m is not None]   # advisory (None) not scored
+    return {
+        "goal_met": sum(1 for _, m, _ in scored if m is True),
+        "goal_total": len(scored),
+        "goal_unmet": [(k, d) for k, m, d in results if m is False],
+        "goal_unclassified": len(unclassified),
+    }
+
+
 # ── per-testcase evaluation ───────────────────────────────────────────────────
-def eval_case(n: int, skip_paths: bool) -> dict:
+def eval_case(n: int, skip_paths: bool, skip_goals: bool = False) -> dict:
     name = f"test{n:02d}"
     d = ROOT / "testcase" / name
     orig = d / f"{name}.v"
@@ -238,15 +274,25 @@ def eval_case(n: int, skip_paths: bool) -> dict:
             rt.unlink(missing_ok=True)
             if not res["roundtrip_ok"]:
                 res["notes"].append("round-trip changed gate count")
+        # --- transform-goal axis ---
+        if not skip_goals:
+            gr = evaluate_goals(net, orig, outnet, out, d / "prompt.txt")
+            if gr is not None:
+                res.update(gr)
+                for k, dtl in gr["goal_unmet"]:
+                    res["notes"].append(f"goal {k}: {dtl}")
     else:
         res["equiv"] = "NO-OUTPUT"
 
-    if res["equiv"] == "EQUIV" and res["count_match"] and res.get("dff_ok", True):
-        res["status"] = "PASS"
-    elif res["equiv"] in ("NOTEQUIV", "BLIF-ERR", "CEC-ERR"):
-        res["status"] = "FAIL"
-    elif res["equiv"] == "NO-OUTPUT":
+    goal_ok = res.get("goal_total", 0) == 0 or res.get("goal_met", 0) == res.get("goal_total", 0)
+    if res["equiv"] == "NO-OUTPUT":
         res["status"] = "NO-OUTPUT"
+    elif res["equiv"] in ("NOTEQUIV", "BLIF-ERR", "CEC-ERR"):
+        res["status"] = "FAIL"                       # broke functionality
+    elif res["equiv"] == "EQUIV" and res["count_match"] and res.get("dff_ok", True) and goal_ok:
+        res["status"] = "PASS"                        # equivalent AND goals achieved
+    elif res["equiv"] == "EQUIV" and not goal_ok:
+        res["status"] = "GOAL-FAIL"                   # equivalent but transform(s) not achieved
     else:
         res["status"] = "CHECK"
     return res
@@ -259,26 +305,29 @@ def main() -> None:
     ap.add_argument("--to", dest="hi", type=int, default=40)
     ap.add_argument("--case", type=int)
     ap.add_argument("--skip-paths", action="store_true", help="skip slow tool path checks")
+    ap.add_argument("--skip-goals", action="store_true", help="skip the transform-goal axis")
     a = ap.parse_args()
     if not PARSER.is_file():
         sys.exit(f"parser binary missing: {PARSER}\n  build: python3 scripts/build_parser.py")
 
     nums = [a.case] if a.case else range(a.lo, a.hi + 1)
     rows = []
-    print(f"{'case':7} {'status':9} {'equiv':11} {'cnt':4} {'dff':4} {'maxFO':6} notes")
-    print("-" * 80)
+    print(f"{'case':7} {'status':9} {'equiv':11} {'cnt':4} {'dff':4} {'goal':6} {'maxFO':6} notes")
+    print("-" * 92)
     for n in nums:
-        r = eval_case(n, a.skip_paths)
+        r = eval_case(n, a.skip_paths, a.skip_goals)
         if r["status"] == "NO-NETLIST":
             continue
         rows.append(r)
-        note = "; ".join(r["notes"])[:60]
+        note = "; ".join(r["notes"])[:56]
+        goalcol = f"{r.get('goal_met', 0)}/{r['goal_total']}" if r.get("goal_total") else "-"
         print(f"{r['name']:7} {r['status']:9} {r.get('equiv',''):11} "
               f"{'ok' if r.get('count_match') else 'X':4} "
               f"{'ok' if r.get('dff_ok', True) else 'X':4} "
+              f"{goalcol:6} "
               f"{r.get('max_fanout', ''):>6} {note}", flush=True)
 
-    print("-" * 80)
+    print("-" * 92)
     st = Counter(r["status"] for r in rows)
     outs = [r for r in rows if r["equiv"] != "NO-OUTPUT"]
     equiv_pass = sum(1 for r in outs if r["equiv"] == "EQUIV")
@@ -287,6 +336,16 @@ def main() -> None:
     if outs:
         print(f"EQUIVALENCE (transforms): {equiv_pass}/{len(outs)} outputs proven equivalent")
     print(f"DIFFERENTIAL gate-count: {cnt_pass}/{len(rows)} match the independent oracle")
+    goal_cases = [r for r in rows if r.get("goal_total", 0) > 0]
+    if goal_cases:
+        gm = sum(r.get("goal_met", 0) for r in goal_cases)
+        gt = sum(r["goal_total"] for r in goal_cases)
+        cpass = sum(1 for r in outs if r["status"] == "PASS")
+        print(f"GOAL (transforms achieved): {gm}/{gt} across {len(goal_cases)} cases")
+        print(f"COMBINED PASS (equiv AND goal): {cpass}/{len(outs)} outputs")
+        gf = [r["name"] for r in rows if r["status"] == "GOAL-FAIL"]
+        if gf:
+            print(f"EQUIVALENT-BUT-GOAL-UNMET: {len(gf)} ({', '.join(gf)})")
     timeouts = [e for r in rows for e in r.get("path_checks", []) if e.get("tool") == "TIMEOUT"]
     if timeouts:
         print(f"PATH-TOOL TIMEOUTS: {len(timeouts)} (oracle answered each; tool does not scale)")
