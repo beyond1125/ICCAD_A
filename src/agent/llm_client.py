@@ -10,6 +10,7 @@ Supported providers (Section 6.2): "openai", "anthropic"
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -86,15 +87,35 @@ class LLMClient:
 
     # ------------------------------------------------------------------ public
 
+    # Transient provider hiccups (rate limit, overloaded, brief network faults)
+    # must not lose a contest turn: retry with backoff before giving up.
+    # Fatal errors (bad key, no quota) re-raise immediately — retrying is useless.
+    _RETRY_DELAYS_S = (2, 8, 20)
+    _FATAL_MARKERS = ("insufficient_quota", "incorrect api key", "invalid x-api-key",
+                      "authentication", "permission")
+
     def chat(self, messages: List[Dict[str, Any]]) -> LLMResponse:
         """Send *messages* to the configured LLM and return a normalised response.
 
         *messages* follow OpenAI format:
             {"role": "system"|"user"|"assistant"|"tool", "content": …, …}
         """
-        if self._provider == "openai":
-            return self._chat_openai(messages)
-        return self._chat_anthropic(messages)
+        last_exc: Exception | None = None
+        for attempt, delay in enumerate((0,) + self._RETRY_DELAYS_S):
+            if delay:
+                logger.warning("LLM transient error (%s) — retry %d in %ds",
+                               last_exc, attempt, delay)
+                time.sleep(delay)
+            try:
+                if self._provider == "openai":
+                    return self._chat_openai(messages)
+                return self._chat_anthropic(messages)
+            except Exception as exc:  # noqa: BLE001
+                text = str(exc).lower()
+                if any(m in text for m in self._FATAL_MARKERS):
+                    raise
+                last_exc = exc
+        raise last_exc  # transient retries exhausted
 
     # ----------------------------------------------------------------- OpenAI
 
