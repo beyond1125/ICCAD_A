@@ -449,6 +449,12 @@ def extract_list_paths_count(text: str) -> Optional[int]:
     m = re.search(r"found\s+(" + _NUM + r")\s+paths?\b", text, re.I)
     if m:
         return _clean_int(m.group(1))
+    # "No (combinational/such) paths exist/found/connect ..." is a zero claim.
+    # Any explicit number elsewhere would have matched the patterns above, so
+    # reaching here with a clear negative statement is unambiguous.
+    if re.search(r"\bno\s+(?:combinational\s+|such\s+)?paths?\s+"
+                 r"(?:exist|were\s+found|found|connect)", text, re.I):
+        return 0
     return None
 
 
