@@ -57,6 +57,8 @@ main.py -> src/utils/io_manager.py (protocol + logging)
 
 ## Key docs
 
+- `docs/CONTEST_QA.md` — official organizer Q&A digest (2026-07-03); overrides
+  the spec PDF on conflicts. Note: Docker submission is NOT supported.
 - `docs/System_design_document.md` — architecture, interfaces, design decisions.
 - `docs/Technical_specification_document.md` — classes, algorithms, data
   structures, known silent-failure risks.
