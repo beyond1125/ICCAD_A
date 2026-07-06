@@ -6,6 +6,20 @@
 #include <string>
 #include <unordered_map>
 #include <queue>
+#include <cstdlib>
+
+// Parse an integer CLI flag; a malformed value exits cleanly instead of
+// crashing with an uncaught std::invalid_argument from std::stoi.
+static int int_flag(std::unordered_map<std::string, std::string>& args,
+                    const std::string& key, int dflt) {
+    if (!args.count(key)) return dflt;
+    try {
+        return std::stoi(args[key]);
+    } catch (const std::exception&) {
+        log_error("Error: invalid integer value for " + key + ": '" + args[key] + "'");
+        std::exit(1);
+    }
+}
 
 int main(int argc, char** argv) {
     std::unordered_map<std::string, std::string> args;
@@ -65,7 +79,7 @@ int main(int argc, char** argv) {
             std::cout << "Failure" << std::endl;
         }
     } else if (action == "insert_buffers") {
-        int mf = args.count("--max_fanout") ? std::stoi(args["--max_fanout"]) : 4;
+        int mf = int_flag(args, "--max_fanout", 4);
         int added = g.insert_buffers(mf);
         if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
         std::cout << "Inserted " << added << " buffer(s) so no gate drives more than "
@@ -94,10 +108,10 @@ int main(int argc, char** argv) {
         std::cout << "Removed " << removed << " dangling gate(s) not contributing to any output."
                   << std::endl;
     } else if (action == "outputs_over_depth") {
-        int mx = args.count("--max") ? std::stoi(args["--max"]) : 4;
+        int mx = int_flag(args, "--max", 4);
         std::cout << g.outputs_over_depth(mx) << std::endl;
     } else if (action == "buffer_signal") {
-        int mf = args.count("--max_fanout") ? std::stoi(args["--max_fanout"]) : 4;
+        int mf = int_flag(args, "--max_fanout", 4);
         int n = g.insert_buffers_on_signal(args["--signal"], mf);
         if (args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
         std::cout << "Inserted " << n << " buffer(s) on signal " << args["--signal"]
@@ -159,6 +173,7 @@ int main(int argc, char** argv) {
             std::cout << "Success" << std::endl;
         } else {
             log_error("Error: --out required for write_blif action");
+            return 1;
         }
     } else if (action == "rebuild") {
         // Reconstruct a full sequential netlist: combinational logic comes from an
@@ -176,6 +191,12 @@ int main(int argc, char** argv) {
             else if (n->type == NodeType::PRIMARY_OUTPUT) R.get_or_create_node(n->name, NodeType::PRIMARY_OUTPUT);
         }
         R.load_logic_blif(args["--blif"]);
+        if (R.blif_unsupported > 0) {
+            std::cout << "Failure: BLIF import contained " << R.blif_unsupported
+                      << " unsupported .names block(s) (>2 inputs); rebuild aborted "
+                      << "to avoid emitting functionally wrong logic." << std::endl;
+            return 1;
+        }
         // Reattach each DFF: Q drives its original net, D is fed by the BLIF's
         // __D_<inst> net, and CK/RN/SN are preserved verbatim via the original
         // pin_conns. The feeder net is renamed to a neutral name first, so it can
@@ -206,6 +227,7 @@ int main(int argc, char** argv) {
             std::cout << "Success" << std::endl;
         } else {
             log_error("Error: --out required for write action");
+            return 1;
         }
     } else if (action == "count_gates") {
         std::unordered_map<GateType, int> counts;

@@ -13,6 +13,10 @@ public:
     std::vector<Node*> all_nodes;
     std::vector<Node*> topological_order;
     std::string module_name;
+    // Count of .names blocks the BLIF importer could not represent (>2 inputs).
+    // Checked by the rebuild action so unsupported logic fails loudly instead of
+    // being silently dropped.
+    int blif_unsupported = 0;
 
     ~Graph();
 
@@ -62,7 +66,7 @@ public:
     std::string r2r_paths();
 
 private:
-    void find_all_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, std::vector<std::vector<Node*>>& all_paths);
+    void find_all_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, std::vector<std::vector<Node*>>& all_paths, const std::unordered_set<Node*>& can_reach);
     int count_fanin_gates_recursive(Node* curr, std::unordered_set<Node*>& visited);
     int count_fanout_gates_recursive(Node* curr, std::unordered_set<Node*>& visited);
     void get_cone_recursive(Node* curr, std::unordered_set<Node*>& visited, bool backward);

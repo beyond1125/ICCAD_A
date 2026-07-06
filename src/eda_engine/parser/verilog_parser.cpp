@@ -171,6 +171,10 @@ void VerilogParser::process_statement(const std::string& stmt, Graph& graph) {
                 if (inst_name.empty()) {
                     static int anon_count = 0;
                     inst_name = "anon_" + std::to_string(anon_count++);
+                    // Skip names the input netlist already uses — silently
+                    // merging into an existing node would corrupt the graph.
+                    while (graph.nodes.count(inst_name))
+                        inst_name = "anon_" + std::to_string(anon_count++);
                 }
 
                 Node* gate_node = graph.get_or_create_node(inst_name, NodeType::GATE);

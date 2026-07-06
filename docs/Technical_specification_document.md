@@ -243,7 +243,7 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 | 層級化深度計算 | `graph.cpp:63-137` | O(V+E) | 逐節點層級（`calc_depth`/`analyze_depth` 基礎） |
 | 關鍵路徑貪婪回溯 | `graph.cpp:139-173` | O(V+E) + O(路徑長度×平均扇入) | 由層級值反向挑選最大前驅重建關鍵路徑 |
 | 路徑計數 DP | `graph.cpp:175-200` | O(V+E) | 沿拓撲序累加路徑數，不枚舉路徑本身 |
-| 路徑枚舉 DFS（無界，風險） | `graph.cpp:202-225, 1308-1319` | 最壞情況指數時間/空間 | 收集所有 start→end 路徑；僅顯示階段截斷於 100 條 |
+| 路徑枚舉 DFS（目標可達性剪枝 + 上限） | `graph.cpp` `find_all_paths` | O(V+E) 反向 BFS + O(路徑數×路徑長)，收集上限 10000 條 | 枚舉 start→end 路徑；先以反向 BFS 標記可達目標的子圖再 DFS，超過上限時輸出附註 DP 精確總數；顯示截斷於 100 條 |
 | 緩衝樹插入（平衡分批） | `graph.cpp:513-623` | O(扇出數)（樹狀分層近似 O(n log n)） | 限制扇出，含控制腳（pin_conn）扇出再加強 |
 | 基底重映射（布林恆等式 + 反閘共用） | `graph.cpp:1224-1306` | O(cone 大小) | 全域/錐狀邏輯轉換為 `nor_not`/`and_not`/`nand_not` 基底 |
 | XOR→4-NAND 分解 | `graph.cpp:682-746`（`decompose_in_cone`） | O(1) 每閘 | 點狀單一閘型別到目標基底的精確結構轉換 |
@@ -262,8 +262,8 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 **(1) BLIF 匯出：正反器切割模型（flop-cut，`write_blif`，`graph.cpp:436-508`）**
 把時序電路轉為 ABC 可驗證的純組合邏輯：每個 DFF 的 Q 輸出網路變成 BLIF 的 `.inputs`（代表「上一狀態」），每個 DFF 的 D 輸入映射到新的 `.outputs` 項 `__D_<inst>`（代表「下一狀態」）。若某 PO net 恰好也是某 DFF 的 Q net，該 PO 從 `.outputs` 省略（BLIF 不允許同一 net 既是 input 又是 output，且等價性已由對應 `__D_<inst>` 覆蓋）。同一 net 被多個 DFF 共同驅動時輸入端僅發一次（`emitted_in` 去重），但每個 flop 各自產生獨立的 `__D_<inst>` tap。此模型僅對「保留正反器邊界」的轉換（緩衝、深度最佳化、掃除、重新命名、分解、基底重映射、反閘收合）為健全（sound）；任何新增/刪除/合併正反器的轉換會使 flop-cut `cec` 誤判為不等價（見 `docs/OPEN_QUESTIONS.md` D6）。
 
-**(2) 路徑枚舉 DFS 對比路徑計數 DP（`find_all_paths` vs `count_paths`，`graph.cpp:202-225` / `175-200`）**
-兩者解決不同問題但常被混淆：`count_paths` 是標準 DAG 上的動態規劃——沿拓撲序做 `path_count[v] += path_count[u]`，時間複雜度 O(V+E)，與路徑實際數量無關，不會指數爆炸。`find_all_paths_recursive` 則是真正的遞迴窮舉（DFS with backtracking），把每一條完整路徑都收集進 `all_paths`（`vector<vector<Node*>>`），**沒有任何遞迴深度或路徑數量上限**；僅在輸出格式化階段對超過 100 條做顯示截斷，計算與記憶體階段完全不設限。在高扇出、多層網格狀結構下路徑數可呈指數增長，是本引擎風險最高的演算法（對照組 `r2r_paths` 有明確的 `MAX_PATHS_PER_PAIR=5`／`MAX_TOTAL_PATHS=200` 並在生成階段就提前跳出，是更安全的設計）。
+**(2) 路徑枚舉 DFS 對比路徑計數 DP（`find_all_paths` vs `count_paths`）**
+兩者解決不同問題但常被混淆：`count_paths` 是標準 DAG 上的動態規劃——沿拓撲序做 `path_count[v] += path_count[u]`，時間複雜度 O(V+E)，與路徑實際數量無關，不會指數爆炸。`find_all_paths` 是真正的遞迴枚舉（DFS with backtracking），2026-07-06 起帶兩層防護：**目標可達性剪枝**（枚舉前先自終點做一次反向 BFS 標記「能到達終點」的子圖，DFS 只在該子圖內下降——沒有剪枝時 DFS 會在到不了終點的死路子圖裡指數級遊走，test12 的實測案例即因此耗盡 150 秒逾時，剪枝後同一查詢 8 秒內完成且實際只有 8 條路徑）與**收集上限 10000 條**（達上限時輸出首行附註以 `count_paths` DP 算出的精確總數，供呼叫端取得真實數字）。顯示階段仍另有 100 條的截斷。歷史對照：`r2r_paths` 從一開始就有 `MAX_PATHS_PER_PAIR=5`／`MAX_TOTAL_PATHS=200` 的生成階段上限，是本次修法的參照設計。
 
 **(3) 基底重映射（`remap_cone_to_basis`，`graph.cpp:1224-1306`）**
 以布林恆等式將任意邏輯閘轉換為三種目標基底之一，並用 `inv_cache`（`unordered_map<Node*, Node*>`）快取每個訊號的反相結果以**共用反閘**、避免重複生成：
@@ -296,7 +296,7 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 
 **常數與 bit-select 的字串命名慣例**：程式碼中沒有獨立的「常數節點」或「bit-select 節點」類別，一律用字串命名慣例表示：常數以字面值本身作為節點名（如 `"1'b0"`），節點型別仍是 `NodeType::SIGNAL`；向量位元命名為 `"base[idx]"`（如 `"data[3]"`），由 `VerilogParser::expand_bus` 在解析階段展開成個別純量節點，圖本身不理解「向量」概念——向量僅是文字層面的巧合，`VerilogWriter::group_signals` 在輸出時以正則 `^(.+)\[(\d+)\]$` 反向偵測連續索引重組回 `[msb:lsb]` 形式。
 
-**`topological_order` 快取（含失效不一致風險）**：`Graph::topological_order` 是快取的拓撲排序結果，`compute_levels`/`count_paths` 僅在其為空時才重新計算。**風險**：多數修改圖結構的方法（`insert_buffers`、`sweep_dangling`、`collapse_inverters`、`merge_duplicate_gates`、`decompose_in_cone`、`remap_cone_to_basis`）並未顯式呼叫 `topological_order.clear()`，只有 `const_propagate`（`graph.cpp:1126`）這麼做。由於目前每次 CLI 呼叫是全新行程（一次 `--action` 對應一次 `parser_cpp` 呼叫），此風險僅在單一行程內連續呼叫多個 `Graph` 方法時才有意義（目前僅 `rebuild` action 建立第二個 `Graph R` 並對其呼叫多個方法）——是潛伏但目前未觸發的設計缺陷。
+**`topological_order` 快取（失效一致性已於 2026-07-06 修復）**：`Graph::topological_order` 是快取的拓撲排序結果，`compute_levels`/`count_paths` 僅在其為空時才重新計算。原本只有 `const_propagate` 會在改圖後清空快取（潛伏的失效不一致缺陷）；現在 `add_edge`（覆蓋所有新增邊的變更路徑）與三個節點刪除函式（`sweep_dangling`、`collapse_inverters`、`merge_duplicate_gates`）都會顯式呼叫 `topological_order.clear()`，單一行程內混合「變更圖 → 深度/路徑計算」的呼叫序列不再讀到過期排序。
 
 **Python 側 session 檔案鏈**：`EDAEngine.__init__` 建立 `_loaded_filepath`（目前作用中的設計檔案，隨每次 transform 改變指向）、`_original_filepath`（原始檔案，永久保留供 `check_equivalence` 預設參照）、`_session_dir`（`tempfile.mkdtemp` 建立的本次 process 生命週期暫存目錄）。每個 transform 方法遵循同一模式：以 `_session_path(tag)` 產生唯一檔名、呼叫 parser action 寫出、成功則重新指向 `_loaded_filepath`，形成「原始檔 → session 檔案1 → session 檔案2 → ...」的鏈。
 
@@ -324,12 +324,12 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 | C++ 側未知 action / 缺必要旗標 | `log_error` + `return 1`（有 exit code）；例外是 `count_gates_in_cone` 缺 `--node` 時直接印到 **stdout**（非 stderr），與其他 action 慣例不一致 | `main.cpp:275-277, 221` |
 | C++ 側節點查找失敗 | 回傳字串內嵌 `"Error: ... not found."`，**非例外、不設 exit code**，`main.cpp` 一律 `return 0`；上層只能靠解析 stdout 字串判斷成功/失敗 | 見第 2 節 CLI 表 |
 
-### 6.1 已知靜默失敗風險
+### 6.1 靜默失敗風險（2026-07-06 修復狀態）
 
-- **`write`/`write_blif` action 缺 `--out` 時 exit code 為 0**：`log_error` 之後**沒有 `return 1`**（不同於 `rebuild` 有 `return`），直接落到函式尾端 `return 0`——實際上什麼檔案都沒寫、stdout 也沒印 `"Success"`，若外層只檢查 exit code 而不檢查 stdout 內容會誤判為成功（`main.cpp:156-162, 203-209`）。
-- **BLIF 匯入對 `nin>=3` 的 `.names` 區塊靜默忽略**：`load_logic_blif` 的 `flush` lambda 只處理 `nin==0/1/2` 三類，超過兩輸入的真值表區塊既不建立任何節點也不報錯，直接消失（`graph.cpp` `flush` lambda）。**目前風險未觸發**：本專案 ABC 呼叫腳本（`reduce_depth`/`rebuild` 流程）僅產生 2-input AIG（`resyn2`/`balance` 搭配標準 `cec` 前處理），故實務上尚未產出過 3 輸入以上的 `.names` 區塊；若未來變更 ABC 腳本產生更寬的查表則需重新檢視此缺口。
-- **`stoi`/`stoul` 無例外防護**：除 `reconnect_pin`（`graph.cpp:634`）外，`main.cpp` 對 `--max_fanout`/`--max` 等數值旗標的解析、以及 `verilog_parser.cpp` 的 range 解析，均未包 `try/catch`；傳入非數字字串會拋出未捕捉例外導致程式因 `terminate` 崩潰（無 `log_error` 訊息）。
-- **`parser_error.log` 側寫**：所有 `log_error` 呼叫除寫 stderr 外，同時附加寫入執行目錄下的 `parser_error.log`（含時間戳）；此檔案會隨每次 parser 呼叫持續累積、不自動清空，需注意其屬於執行期產物而非版本控管內容。
+- **`write`/`write_blif` 缺 `--out`**（已修復）：原本 `log_error` 後未 `return 1`，exit code 為 0 且無任何 stdout 輸出，外層只看 exit code 會誤判成功；現已補上 `return 1`。Python 層的 `verified_writes` 磁碟二次驗證仍保留作為縱深防禦。
+- **BLIF 匯入 `nin>=3` 的 `.names` 區塊**（已修復為大聲失敗）：原本會落入 2-input 分支以前兩個輸入加超界 mask 建出**錯誤邏輯**；現在 `flush` 在真值表展開前即攔截（同時避免 O(2^nin) 展開），累計 `Graph::blif_unsupported`，`rebuild` action 偵測到即輸出 `"Failure: BLIF import contained N unsupported .names block(s)..."` 並 `return 1`。完整支援 3+ 輸入查表仍未實作（目前 ABC 腳本僅產 2-input AIG，無實際需求）。
+- **`stoi` 無例外防護**（已修復於 CLI 層）：`main.cpp` 的數值旗標一律經 `int_flag()` 輔助函式解析，非數字值會 `log_error` 後乾淨地 `exit(1)`，不再因未捕捉例外 `terminate`。`verilog_parser.cpp` 的 range 解析因正則已保證僅匹配數字字元，維持原狀（超長數字的 `out_of_range` 理論上仍可能，實務風險低）。
+- **`parser_error.log` 側寫**（現況維持）：所有 `log_error` 呼叫除寫 stderr 外，同時附加寫入執行目錄下的 `parser_error.log`（含時間戳）；此檔案持續累積、不自動清空，屬執行期產物而非版本控管內容。
 
 ---
 

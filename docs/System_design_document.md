@@ -212,7 +212,7 @@ stdin/stdout 協定由 `IOManager`（`src/utils/io_manager.py`）獨佔實作，
 `parser_cpp` 以 `--in <file.v> --action <action> [--key value ...]` 的簡單旗標配對呼叫慣例運作。介面設計上有兩個對上層（Python 執行層）至關重要的契約特性：
 
 - **stdout 首行字串為事實 API**：`parser_cpp` 對每個 action 的**輸出首行字串格式**（例如 `load` 的 `"Success. PI: N, PO: N, Gates: N"`、`replace_gate` 的 `"Success"`/`"Failure"`）才是 Python 層實際依賴的介面，而非任何結構化的回傳碼或機器可讀格式（JSON 輸出的少數 action 例外，見 TSD 第 2 節 CLI 表）。這個「輸出字串即 API」的設計沒有 schema 版本控管，任何未來對輸出字串格式的調整都是破壞性變更。
-- **exit code 不可靠，需以字串判斷成敗**：絕大多數 `Graph::` 方法回傳的字串本身內嵌 `"Error: ... not found."` 或 `"Failure: ..."` 前綴，但這些**不是例外、也不設定非零 exit code**——`main.cpp` 對這些呼叫一律 `return 0`。因此上層無法依賴 process exit code 區分「找不到節點」與「成功」，必須解析 stdout 字串內容。更嚴重的是 `write`/`write_blif` action 缺少 `--out` 旗標時的**靜默失敗風險**：`log_error` 之後沒有 `return 1`，會直接落到函式尾端正常結束（exit code 0），但實際上什麼檔案都沒寫、stdout 也沒印出 `"Success"` 這行——若外層只檢查 exit code 會誤判為成功。這正是第 5.4 節 `verified_writes` 磁碟二次驗證機制存在的直接理由：介面契約本身不可靠，上層必須自行以獨立手段（`os.path.isfile`）驗證副作用是否真的發生。
+- **exit code 不可靠，需以字串判斷成敗**：絕大多數 `Graph::` 方法回傳的字串本身內嵌 `"Error: ... not found."` 或 `"Failure: ..."` 前綴，但這些**不是例外、也不設定非零 exit code**——`main.cpp` 對這些呼叫一律 `return 0`。因此上層無法依賴 process exit code 區分「找不到節點」與「成功」，必須解析 stdout 字串內容。歷史教訓：`write`/`write_blif` action 缺少 `--out` 旗標時曾**靜默失敗**（exit code 0、無任何 stdout 輸出）——此問題已於 2026-07-06 修復（補上 `return 1`），但它是第 5.4 節 `verified_writes` 磁碟二次驗證機制誕生的直接理由；該機制保留作為縱深防禦：介面契約以字串為準的本質未變，上層仍以獨立手段（`os.path.isfile`）驗證副作用是否真的發生。
 
 ### 6.4 ABC 介面
 
@@ -297,14 +297,16 @@ BLIF（Berkeley Logic Interchange Format）是 Python/C++ 層與 ABC 之間的�
 
 ## 10. 已知限制與技術債
 
-### C++ 引擎層
+### C++ 引擎層（2026-07-06 修復批次後的狀態）
 
-- **BLIF 匯入 `nin>=3` 缺口**：`load_logic_blif` 的真值表→原語映射僅處理 `nin==0/1/2` 三類，超過兩輸入的 `.names` 區塊既不建立任何節點也不報錯，直接靜默消失。**目前風險未觸發**：本專案的 ABC 呼叫腳本（`reduce_depth`/`rebuild` 流程搭配 `strash`/`resyn2`/`balance`）僅產生 2-input AIG，尚未實際產出過 3 輸入以上的 `.names` 區塊；若未來變更 ABC 最佳化腳本使其產生更寬的查表，此缺口會造成靜默的功能性缺損，需要重新檢視。
-- **`find_all_paths` 無界枚舉**：路徑枚舉演算法（`find_all_paths_recursive`）是真正的遞迴窮舉，把所有路徑完整收集進記憶體，僅在輸出格式化階段對超過 100 條做顯示截斷——計算與記憶體階段完全不設限，沒有像 `r2r_paths`（`MAX_PATHS_PER_PAIR=5`、`MAX_TOTAL_PATHS=200`，在生成階段即提前跳出）那樣的安全設計。在高扇出、多層網格狀結構下路徑數可呈指數增長，是本引擎風險最高的演算法，也是 test12 需要 150 秒 per-action timeout 的直接成因。
-- **`stoi`/`stoul` 缺乏例外防護**：除 `reconnect_pin` 外，`main.cpp` 對 `--max_fanout`/`--max` 等數值旗標的解析、以及 `verilog_parser.cpp` 的 range 解析，均未包 `try/catch`；傳入非數字字串會拋出未捕捉例外導致程式因 `terminate` 崩潰，且無 `log_error` 訊息可供上層診斷。
-- **拓撲快取失效不一致（潛伏但目前未觸發）**：多數修改圖結構的方法（`insert_buffers`、`sweep_dangling`、`collapse_inverters`、`merge_duplicate_gates`、`decompose_in_cone`、`remap_cone_to_basis`）並未顯式清空 `topological_order` 快取，只有 `const_propagate` 這麼做。由於目前每次 CLI 呼叫是全新行程、圖結構不跨行程存活，此風險僅在單一行程內連續呼叫多個 `Graph` 方法時才有意義——目前僅 `rebuild` action 會建立第二個 `Graph` 實例並對其呼叫多個方法。就現有呼叫模式而言，這是一個已識別、目前未觸發、但日後若把多個 action 合併進同一行程需特別注意的設計缺陷。
-- **`anon_N` 命名碰撞**：匿名閘實例的命名計數器是函式內 `static`，跨越同次程式執行的所有敘述累加；若輸入檔案本身含有恰好同名的具名節點，`get_or_create_node` 會將其視為同一節點誤合併，且無任何碰撞偵測或錯誤/警告輸出。
-- **`SignalGroup` 死程式碼**：`VerilogWriter::SignalGroup` 結構宣告於標頭但未被 `.cpp` 實作使用（`group_signals` 直接以 `unordered_map` 實作分組），屬於文件與實作已出現落差的死程式碼，不影響行為，但代表未來重構時需留意其歷史用途是否已完全被取代。
+以下六項為程式碼審查（2026-07-06）發現的缺陷，同日完成修復；保留於此作為設計記錄：
+
+- **BLIF 匯入 `nin>=3` 缺口**（已修復為大聲失敗）：原本超過兩輸入的 `.names` 區塊會落入 2-input 分支建出**錯誤邏輯**；現在 `flush` 在真值表展開前攔截並累計 `blif_unsupported`，`rebuild` 偵測到即回報 `Failure` 並以非零 exit code 中止。完整支援 3+ 輸入查表仍未實作——目前 ABC 腳本（`strash`/`resyn2`/`balance`）僅產生 2-input AIG，無實際需求;若未來變更 ABC 腳本，失敗會是顯性的而非靜默的。
+- **`find_all_paths` 無界枚舉**（已修復）：加入目標可達性剪枝（反向 BFS 標記可達終點的子圖）與 10000 條收集上限；達上限時輸出附註 `count_paths` DP 的精確總數。實測：test12 原本 150 秒逾時的查詢，剪枝後 8 秒內完成（實際僅 8 條路徑——原本的耗時全部來自死路子圖的指數遊走）。150 秒 per-action timeout 保留作為一般性保險。
+- **`stoi` 缺乏例外防護**（已修復於 CLI 層）：`main.cpp` 數值旗標改經 `int_flag()` 解析，非數字值 `log_error` 後乾淨退出。
+- **拓撲快取失效不一致**（已修復）：`add_edge` 與三個節點刪除函式（`sweep_dangling`、`collapse_inverters`、`merge_duplicate_gates`）現在都顯式清空 `topological_order`，覆蓋所有變更圖結構的路徑。
+- **`anon_N` 命名碰撞**（已修復）：匿名實例命名現在會跳過輸入網表已使用的名稱，不再靜默誤合併。
+- **`SignalGroup` 死程式碼**（已移除）。
 
 ### 系統層
 

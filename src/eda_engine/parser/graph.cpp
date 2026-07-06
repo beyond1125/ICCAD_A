@@ -26,6 +26,10 @@ Node* Graph::get_or_create_node(const std::string& name, NodeType type) {
 void Graph::add_edge(Node* from, Node* to) {
     from->outputs.push_back(to);
     to->inputs.push_back(from);
+    // Any structural change invalidates the cached topological order; keeping
+    // a stale cache silently corrupts later depth/path computations in the
+    // same process (node-removal passes clear it themselves).
+    topological_order.clear();
 }
 
 void Graph::compute_topological_sort() {
@@ -207,12 +211,39 @@ std::string Graph::find_all_paths(const std::string& start, const std::string& e
 
     std::vector<std::vector<Node*>> all_paths;
     std::vector<Node*> current_path;
-    find_all_paths_recursive(start_node, end_node, avoid_node, current_path, all_paths);
+
+    // Target-reachability pruning: without it the DFS wanders exhaustively
+    // through dead-end regions that can never reach the target (exponential
+    // on large fanout cones). Reverse BFS from the target marks the productive
+    // subgraph; the DFS then only descends into it, so total work is
+    // proportional to the paths actually found (bounded by the 10000 cap).
+    std::unordered_set<Node*> can_reach;
+    {
+        std::vector<Node*> st{end_node};
+        can_reach.insert(end_node);
+        while (!st.empty()) {
+            Node* w = st.back(); st.pop_back();
+            // Valid combinational paths never pass THROUGH a DFF gate.
+            if (w != end_node && w->type == NodeType::GATE && w->gate_type == GateType::DFF)
+                continue;
+            for (Node* u : w->inputs) {
+                if (avoid_node && u == avoid_node) continue;
+                if (can_reach.insert(u).second) st.push_back(u);
+            }
+        }
+    }
+
+    find_all_paths_recursive(start_node, end_node, avoid_node, current_path, all_paths, can_reach);
 
     if (all_paths.empty()) return "No paths found.";
 
     std::stringstream ss;
-    ss << "Found " << all_paths.size() << " paths:\n";
+    ss << "Found " << all_paths.size() << " paths";
+    if (all_paths.size() >= 10000) {
+        ss << " (enumeration capped at 10000; exact total by DP: "
+           << count_paths(start, end, avoid) << ")";
+    }
+    ss << ":\n";
     for (size_t i = 0; i < all_paths.size(); ++i) {
         ss << "Path " << i + 1 << ": ";
         for (size_t j = 0; j < all_paths[i].size(); ++j) {
@@ -359,6 +390,17 @@ void Graph::load_logic_blif(const std::string& file) {
         if (toks.empty()) return;
         std::string outnm = toks.back();
         int nin = (int)toks.size() - 1;
+        if (nin > 2) {
+            // Only <=2-input .names are representable as native primitives.
+            // Falling through would build WRONG logic (first two inputs + an
+            // out-of-range mask) after an O(2^nin) truth-table expansion;
+            // count it and let the caller fail loudly.
+            blif_unsupported++;
+            log_error("Error: BLIF import: unsupported .names with " +
+                      std::to_string(nin) + " inputs (output '" + outnm + "')");
+            toks.clear(); rows.clear();
+            return;
+        }
         int N = 1 << nin;
         int rowval = rows.empty() ? 1 : (rows[0].back() == '1' ? 1 : 0);
         std::vector<int> tt(N, rows.empty() ? 0 : (1 - rowval));
@@ -644,6 +686,7 @@ bool Graph::reconnect_pin(const std::string& gate, const std::string& pin, const
 }
 
 int Graph::sweep_dangling() {
+    topological_order.clear();  // node removal invalidates the cached topo order
     std::unordered_set<Node*> live; std::vector<Node*> stack;
     for (Node* n : all_nodes) {
         bool seed = n->type == NodeType::PRIMARY_OUTPUT || (n->type == NodeType::GATE && n->gate_type == GateType::DFF);
@@ -887,6 +930,7 @@ std::string Graph::highest_fanout_pi() {
 // duplicates). Flip-flops are never merged, so the flop boundary (and flop-cut
 // equivalence) is preserved. Returns the number of gates merged away.
 int Graph::merge_duplicate_gates() {
+    topological_order.clear();  // node removal invalidates the cached topo order
     int merged = 0; bool changed = true;
     auto rm = [&](std::vector<Node*>& v, Node* x) { v.erase(std::remove(v.begin(), v.end(), x), v.end()); };
     while (changed) {
@@ -1172,6 +1216,7 @@ std::string Graph::const_propagate(const std::string& mode,
 // x and g2 removed; g1 removed too if it then drives nothing. Iterates to fully
 // collapse chains. A pair feeding a primary output is left intact. Returns count removed.
 int Graph::collapse_inverters() {
+    topological_order.clear();  // node removal invalidates the cached topo order
     int removed = 0; bool changed = true;
     std::unordered_set<Node*> dead;
     auto rm = [&](std::vector<Node*>& v, Node* x) { v.erase(std::remove(v.begin(), v.end(), x), v.end()); };
@@ -1305,14 +1350,20 @@ int Graph::remap_cone_to_basis(const std::string& root, const std::string& basis
     return (int)targets.size();
 }
 
-void Graph::find_all_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, std::vector<std::vector<Node*>>& all_paths) {
+void Graph::find_all_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, std::vector<std::vector<Node*>>& all_paths, const std::unordered_set<Node*>& can_reach) {
     if (curr == avoid) return;
+    // Hard cap: enumeration is exponential in the worst case; without this the
+    // collection phase can exhaust time/memory long before the display-side
+    // truncation is reached (count_paths provides exact totals via DP).
+    if (all_paths.size() >= 10000) return;
     path.push_back(curr);
     if (curr == target) all_paths.push_back(path);
     else {
         for (auto next : curr->outputs) {
             if (next->type == NodeType::GATE && next->gate_type == GateType::DFF) continue;
-            find_all_paths_recursive(next, target, avoid, path, all_paths);
+            // Only descend into the subgraph that can still reach the target.
+            if (!can_reach.count(next)) continue;
+            find_all_paths_recursive(next, target, avoid, path, all_paths, can_reach);
         }
     }
     path.pop_back();
