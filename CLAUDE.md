@@ -57,6 +57,9 @@ main.py -> src/utils/io_manager.py (protocol + logging)
 
 ## Key docs
 
+- `docs/System_design_document.md` — architecture, interfaces, design decisions.
+- `docs/Technical_specification_document.md` — classes, algorithms, data
+  structures, known silent-failure risks.
 - `docs/OPEN_QUESTIONS.md` — spec-ambiguity decisions; read before changing
   transform semantics.
 - `docs/REPORT_transform.md` — transform tools, testcases, algorithms.
