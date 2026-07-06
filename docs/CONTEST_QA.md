@@ -40,13 +40,15 @@
 - A10:EDA 後端工具不限(可用 Yosys/商用工具);我們的自建引擎 + ABC 合法。
 - A17:RAM/磁碟限制參考 TSRI 機器規格(規格文件未附)。
 
-## ❓ 官方尚未答覆(Q21,與我們 OPEN_QUESTIONS 的未決項同源)
+## A21(使用者提供補充,PDF 渲染缺漏)— 三個未決項全部落槌
 
-Q21 問了三題,**本版 PDF 無 A21**:
-1. 「constant」指結構上綁 1'b0/1'b1,還是含功能恆定(SAT 可證)?DFF 初始態怎麼算?
-   → 對應 `OPEN_QUESTIONS.md` O6;維持現行結構性解讀,注意後續 QA 更新。
-2. fan-in cone 深度是否穿越 DFF?→ 對應 O1/D4;維持 flop 邊界 + cone 穿越的現行決策。
-3. 「complete enumeration」289k 條路徑怎麼交?→ 對應 O3;A16 的檔案落地指引是目前最佳依據。
+| # | 官方裁決 | 對既有決策的影響 |
+|---|---|---|
+| A21.1 | 「constant」= **功能恆定**(對所有輸入可證恆 0/1);**DFF 初始態 = 0**,X 忽略 | **推翻 O6 的結構性解讀** — 現行 `const_propagate` 只認結構上綁 1'b0/1'b1;「always 0?」「report gates with constant input」類問題需要 SAT 級功能恆定分析 + DFF-init-0 的時序常數語意(PLAN P1-8) |
+| A21.2 | cone/深度 = **僅組合邏輯**,DFF.Q 視為 primary input | **確認 O1**(深度 flop 邊界 ✓,引擎與 oracle 已對齊);**挑戰 D4** — 分析類 cone 問題應以組合 cone 作答(oracle 已是此預設 ✓,引擎的 cone 分析工具穿越 DFF,需對齊,PLAN P2-9);transform 用的穿越式 cone 因等價性安全暫維持 |
+| A21.3 | complete enumeration = **逐條列出**;超大結果寫檔 + 回應附路徑 | 與 A16 一致,**P1-3(流式落檔完整枚舉)升為必要項** |
+| A21.4 | 功能等價是主要評分;次要指標會在 prompt 明示;多種合法改寫時 prompt 會指明優化準則 | 等價優先架構 ✓;cost 逐題讀 prompt(同 A8/A9) |
+| A21.5/6 | **只允許單執行緒、一次一個請求**;rate limit 依模型政策、無 token 上限;60s/300s;硬體看 TSRI 規格 | 現行架構已合規(planner 順序執行、subprocess 依序、ABC 單執行緒);**不變量:未來不得加平行工具執行**(記入 agent-runtime 規則,PLAN P2-9 一併) |
 
 **維護規則**:官方釋出新版 QA 時,更新本檔並在 PLAN/OPEN_QUESTIONS 同步標註;
 本檔結論與程式行為衝突時,依 `.claude/rules/docs-sync.md` 的紀律同 commit 修正。

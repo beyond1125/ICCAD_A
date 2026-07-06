@@ -81,6 +81,43 @@ answer-gate 攔不到 — 有呼叫工具、只是無視結果)。
 CORRECT 不退步。
 **工作量**:小。
 
+## P1-8 功能恆定分析(A21.1 — 推翻 O6 的結構性解讀)
+
+**問題**:官方裁決「constant」= 功能恆定(SAT 可證恆 0/1),DFF 初始態 = 0、
+X 忽略。現行 `const_propagate` 只認結構上綁 1'b0/1'b1;受影響題型:
+「Is output n16 always 0?」(test31)、「Report any AND/NAND/OR/NOR gates with
+constant inputs」+ 對應 simplify(test32/36/38/39/40)— 結構性回答可能漏報
+功能恆定的訊號。
+
+**方案**(兩階段):
+- (i) 新引擎工具 `check_const(net)`:對單一網的組合 cone 用自製 BLIF + ABC
+  SAT 判恆 0/恆 1(oracle 的 `always_const` 已有同款實作可移植),疊加
+  **DFF-init-0 定點迭代**:先假設全部 DFF.Q 未知 → 凡 D 端可證恆 0 的 DFF
+  其 Q 視為常數 0 → 重跑直到不動點(時序常數掃描的保守近似,DFF 初始態 0
+  下是健全的)。
+- (ii) `const_propagate` 加 `--semantics functional` 模式:report 時對每個
+  gate 的每個輸入網跑 (i) 的判定(以 cone 大小上限與快取控制成本);
+  simplify 沿用結構性傳播(功能恆定的輸入以 (i) 證明後綁常數再傳播,
+  等價性由 cec 把關)。
+**驗證**:test31 Q8 的 always-0 答案與 oracle `always_const` 一致;
+test32/36/38/39/40 的 const 報告題重跑,answer report 不退步;全部轉換後
+cec 等價維持。
+**工作量**:大(本計畫最大項;ABC SAT 批次成本需實測)。
+
+## P2-9 分析 cone 語意對齊 + 單執行緒不變量(A21.2/A21.5)
+
+**問題**:A21.2 裁決分析類 cone/深度僅組合邏輯(DFF.Q = PI)。oracle 預設
+已正確;引擎的 cone 分析工具(get_fanin_cone/count_fanin_gates/
+count_gates_in_cone)穿越 DFF(D4 的 transform 慣例外溢到分析)。
+**方案**:C++ cone 分析加 `--stop_at_dff`(預設開啟於分析類 action);
+transform 用的 `fanin_cone_gates` 維持穿越(等價性安全,D4 理由仍成立)。
+tool_spec 描述同步說明語意。OPEN_QUESTIONS D4/O1/O6 加官方裁決註記。
+另:A21.5「僅單執行緒」寫入 `.claude/rules/agent-runtime.md` 作為不變量
+(禁止未來加平行工具執行)。
+**驗證**:cone 類分析答案 vs oracle(combinational)全 40 題比對;
+transform 題等價性不退步。
+**工作量**:中。
+
 ## P2-6 floating/unconnected ports 容錯(A5.6)
 
 **方案**:造 3 個合成 fixture(懸空輸入、未接輸出 port、未驅動 wire),
@@ -99,8 +136,11 @@ CORRECT 不退步。
 1. P1-4 + P1-5(同一個 subagent:都是 prompt/tool_spec 小改,共用一次
    五題回歸)
 2. P0-2(獨立 subagent;需全量 sweep 回歸,等 1 完成避免混淆歸因)
-3. P1-3(獨立 subagent:C++ + engine + docs)
+3. P1-3(獨立 subagent:C++ + engine + docs;A21.3 後為必要項)
 4. P0-1(獨立 subagent:打包;與 2/3 無程式碼衝突,可並行)
-5. P2-6(小 subagent)、P2-7(可選)
+5. **P1-8(獨立 subagent,最大項)**:功能恆定分析;建議在 1–3 落地後做,
+   因為它會改動 const 類題的答案語意,需要乾淨的回歸基準
+6. P2-9(獨立 subagent:cone 語意 + 單執行緒不變量文件化)
+7. P2-6(小 subagent)、P2-7(可選)
 
 全部完成後:全量 sweep + 四層驗證 + 更新 CONTEST_QA.md 的狀態欄。
