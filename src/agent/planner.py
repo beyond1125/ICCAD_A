@@ -235,9 +235,17 @@ class Planner:
                 )
                 break
 
+            self._shrink_context(messages)
             try:
                 response = self._llm.chat(messages)
             except Exception as exc:
+                # Reactive fallback: if the provider says the prompt is too
+                # long (char-based estimate undershot), shrink hard and retry
+                # this iteration once instead of losing the whole turn.
+                if "prompt is too long" in str(exc).lower():
+                    if self._shrink_context(messages, keep_recent=1, limit=0):
+                        logger.warning("Prompt too long — force-shrunk, retrying")
+                        continue
                 logger.error("LLM API error (iteration %d): %s", iteration, exc)
                 answer = f"Error communicating with the LLM service: {exc}"
                 break
@@ -305,6 +313,39 @@ class Planner:
         self._conversation_history.append({"role": "user", "content": user_request})
         self._conversation_history.append({"role": "assistant", "content": answer})
         return answer
+
+    # Keep well under the 200k-token API limit. Netlist identifiers tokenize at
+    # ~2 chars/token (not the usual ~4), so the char threshold must be
+    # conservative: on huge designs a long tool loop can accumulate enough
+    # tool-result payload in ONE request to 400 with "prompt is too long"
+    # (seen on test33/test40, 85k-112k gates, at only ~435k chars).
+    _MAX_CONTEXT_CHARS = 300_000
+    _KEEP_RECENT_TOOL_RESULTS = 2
+
+    def _shrink_context(self, messages: List[Dict[str, Any]],
+                        keep_recent: Optional[int] = None,
+                        limit: Optional[int] = None) -> bool:
+        """Truncate old tool results in place when the payload nears the model
+        context limit. Returns True if anything was shrunk."""
+        limit = self._MAX_CONTEXT_CHARS if limit is None else limit
+        keep = self._KEEP_RECENT_TOOL_RESULTS if keep_recent is None else keep_recent
+        total = sum(len(str(m.get("content", ""))) for m in messages)
+        if total <= limit:
+            return False
+        tool_idxs = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+        changed = False
+        for i in tool_idxs[:-keep or None]:
+            content = messages[i].get("content", "")
+            if isinstance(content, str) and len(content) > 500:
+                messages[i]["content"] = (
+                    content[:400] + " …[truncated: earlier tool result shortened "
+                    "to fit the context window; re-run the tool if needed]"
+                )
+                changed = True
+        if changed:
+            logger.warning("Context shrink: %d chars -> %d", total,
+                           sum(len(str(m.get("content", ""))) for m in messages))
+        return changed
 
     def _write_satisfied(self, user_request: str, writes_before: int) -> bool:
         """True if a verified write happened during this request that plausibly

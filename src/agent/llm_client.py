@@ -91,8 +91,11 @@ class LLMClient:
     # must not lose a contest turn: retry with backoff before giving up.
     # Fatal errors (bad key, no quota) re-raise immediately — retrying is useless.
     _RETRY_DELAYS_S = (2, 8, 20)
+    # Non-retryable: account problems AND deterministic request errors — a
+    # 400 "prompt is too long" will fail identically on every retry.
     _FATAL_MARKERS = ("insufficient_quota", "incorrect api key", "invalid x-api-key",
-                      "authentication", "permission")
+                      "authentication", "permission", "invalid_request",
+                      "prompt is too long")
 
     def chat(self, messages: List[Dict[str, Any]]) -> LLMResponse:
         """Send *messages* to the configured LLM and return a normalised response.
