@@ -228,6 +228,15 @@ class EDAEngine:
         if raw.startswith("Error"):
             return raw
 
+        # Embed the conclusion directly in the tool result: small eval models
+        # tend to copy a tool's stated conclusion verbatim, but sometimes
+        # answer "yes, a path exists" for a "does a path exist" question even
+        # when list_paths found zero. Prefixing the definitive answer here
+        # turns that copying tendency into a safeguard instead of a failure
+        # mode (see docs/PLAN_QA_fixes.md P1-5).
+        if raw.strip() == "No paths found.":
+            return "ANSWER: NO — " + raw
+
         # ── Parse the real total from the C++ header line ─────────────────
         # The C++ parser emits a header like "Found 289366 paths:" followed
         # by up to ~101 printed path lines.  The header number is the ground

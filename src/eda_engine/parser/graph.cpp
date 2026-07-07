@@ -329,10 +329,19 @@ std::string Graph::get_node_info(const std::string& name) {
         }
     }
 
-    ss << "\n  Fanin count: " << n->inputs.size() << "\n  Fanout count: " << n->outputs.size();
-    ss << "\n  Driving Gates: ";
+    // Fanout count must equal the number of consumer GATES this node directly
+    // drives (driven_gates.size()), not n->outputs.size(): for a gate node,
+    // n->outputs is edges to its own output net/signal node — typically a
+    // single edge even when that net fans out to many consumer gates — so
+    // n->outputs.size() previously undercounted fanout (e.g. printing 1 while
+    // 2 successor gates were listed right below it). Fanin count is left as
+    // n->inputs.size() (input-pin count), which is not subject to the same
+    // net-vs-gate aliasing and already matches driving_gates.size() in the
+    // normal single-driver-per-net case.
+    ss << "\n  Fanin count: " << n->inputs.size() << "\n  Fanout count: " << driven_gates.size();
+    ss << "\n  Input drivers (fanin): ";
     for (auto g : driving_gates) ss << g->name << " ";
-    ss << "\n  Driven Gates (Immediate Successors): ";
+    ss << "\n  Driven gates (immediate successors / direct fanout): ";
     for (auto g : driven_gates) ss << g->name << " ";
     return ss.str();
 }

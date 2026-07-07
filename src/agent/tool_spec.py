@@ -136,8 +136,11 @@ EDA_TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "count_fanin_gates",
             "description": (
-                "Count the total number of gate instances in the transitive fanin cone "
-                "(all gates that drive this node, directly or indirectly)."
+                "Count the total number of gate instances in the TRANSITIVE fanin cone: "
+                "every gate that drives this node directly OR indirectly (the whole "
+                "upstream logic cone). This is NOT the count of immediate/direct "
+                "driving gates. For 'how many gates directly drive X' use get_node_info "
+                "instead and read its direct fanin (Driving Gates) list."
             ),
             "parameters": {
                 "type": "object",
@@ -156,8 +159,14 @@ EDA_TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "count_fanout_gates",
             "description": (
-                "Count the total number of gate instances in the transitive fanout cone "
-                "(all gates driven by this node, directly or indirectly)."
+                "Count the total number of gate instances in the TRANSITIVE fanout cone: "
+                "every gate reachable downstream from this node, directly or indirectly "
+                "(the whole downstream logic cone, potentially far larger than the "
+                "node's direct loads). This is NOT the direct fanout / number of gates "
+                "immediately driven by this node. For 'how many gates does X directly "
+                "drive' / 'fanout of X' (direct loads only) use get_node_info instead "
+                "and read its direct fanout count / Driven Gates list — only use this "
+                "tool when the request explicitly asks for the transitive/cone fanout."
             ),
             "parameters": {
                 "type": "object",
@@ -262,8 +271,14 @@ EDA_TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_node_info",
             "description": (
-                "Retrieve structural information (type, fanin, fanout, driver) "
-                "about a specific signal, wire, or gate instance."
+                "Retrieve structural information about a specific signal, wire, or gate "
+                "instance: its type, DIRECT (immediate) fanin count and driving gates, "
+                "and DIRECT (immediate) fanout count and driven gates (immediate "
+                "successors) — one level only, not the transitive cone. Use this for "
+                "'how many gates does X directly drive', 'what directly drives X', or "
+                "'list the immediate successors of X'. For the full transitive fanin/"
+                "fanout cone use count_fanin_gates / count_fanout_gates or "
+                "get_fanin_cone / get_fanout_cone instead."
             ),
             "parameters": {
                 "type": "object",

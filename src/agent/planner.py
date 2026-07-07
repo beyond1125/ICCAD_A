@@ -92,6 +92,14 @@ _SYSTEM_PROMPT = (
     " For gate counts after transformation: read gate_delta from the tool result, do NOT recount manually."
     " For 'how many PI/PO', 'list all primary inputs/outputs': use list_pio directly."
     " For 'which output has deepest cone', 'max combinational depth': use deepest_cone_output directly."
+    " 'number of gates driven by X' / 'fanout of X' means DIRECT loads (use "
+    "get_node_info's fanout count / Driven Gates), NOT the transitive cone — "
+    "unless the request explicitly says transitive/cone."
+    " 'transitive fanout cone of X' -> use count_fanout_gates or "
+    "count_gates_in_cone(direction=fanout), never count_gates (that is the "
+    "whole design)."
+    " Path existence questions: if find_paths reports 0 paths / 'No paths "
+    "found', the answer MUST be No."
 )
 
 

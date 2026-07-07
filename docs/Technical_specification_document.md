@@ -190,11 +190,11 @@
 | `analyze_critical_path` | `start_node`, `end_node` |
 | `find_paths` | `start_node`, `end_node`, `avoid_node?` |
 | `count_gates` | — |
-| `count_fanin_gates` / `count_fanout_gates` | `node_name` |
+| `count_fanin_gates` / `count_fanout_gates` | `node_name`（**transitive** cone — all gates reachable up/downstream; NOT direct loads. 見 §6.1 2026-07-07 條目） |
 | `get_fanin_cone` / `get_fanout_cone` | `node_name` |
 | `count_gates_in_cone` | `node_name`, `direction?` |
 | `get_fanin_depth` | `node_name` |
-| `get_node_info` | `node_name` |
+| `get_node_info` | `node_name`（回報**直接** fanin/fanout：Fanin count、Input drivers、Fanout count、Driven gates/immediate successors；非遞移錐） |
 | `list_gates_by_type` | `gate_type` |
 | `flipflops_by_clock` | `clock` |
 | `max_pi_to_dff_depth` / `list_floating` / `highest_fanout_pi` / `list_nodes` / `list_pio` / `r2r_paths` / `deepest_cone_output` | — |
@@ -330,6 +330,8 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 - **BLIF 匯入 `nin>=3` 的 `.names` 區塊**（已修復為大聲失敗）：原本會落入 2-input 分支以前兩個輸入加超界 mask 建出**錯誤邏輯**；現在 `flush` 在真值表展開前即攔截（同時避免 O(2^nin) 展開），累計 `Graph::blif_unsupported`，`rebuild` action 偵測到即輸出 `"Failure: BLIF import contained N unsupported .names block(s)..."` 並 `return 1`。完整支援 3+ 輸入查表仍未實作（目前 ABC 腳本僅產 2-input AIG，無實際需求）。
 - **`stoi` 無例外防護**（已修復於 CLI 層）：`main.cpp` 的數值旗標一律經 `int_flag()` 輔助函式解析，非數字值會 `log_error` 後乾淨地 `exit(1)`，不再因未捕捉例外 `terminate`。`verilog_parser.cpp` 的 range 解析因正則已保證僅匹配數字字元，維持原狀（超長數字的 `out_of_range` 理論上仍可能，實務風險低）。
 - **`parser_error.log` 側寫**（現況維持）：所有 `log_error` 呼叫除寫 stderr 外，同時附加寫入執行目錄下的 `parser_error.log`（含時間戳）；此檔案持續累積、不自動清空，屬執行期產物而非版本控管內容。
+- **`get_node_info` 的 Fanout count 與列出的後繼閘數不符**（已修復，2026-07-07，官方 Q&A P1-4）：`Graph::get_node_info`（`graph.cpp`）原本印出 `n->outputs.size()` 作為 Fanout count——對閘節點而言 `outputs` 是指向其自身輸出網（net）節點的邊，通常恆為 1，即使該網實際扇出到多個消費閘（test18 曾印出 `Fanout count: 1` 但同時列出 2 個 `Driven Gates`）。現改為 `driven_gates.size()`（依網追蹤後得到的消費閘集合大小），與下方列出的閘數一致。同時把易誤導的欄位名稱 `Driving Gates` / `Driven Gates (Immediate Successors)` 改名為 `Input drivers (fanin)` / `Driven gates (immediate successors / direct fanout)`，並在 `tool_spec.py` 的 `count_fanin_gates`/`count_fanout_gates`/`get_node_info` 描述與 `planner.py` KEY RULES 中明確區分「direct fanout（get_node_info）」vs「transitive fanout cone（count_fanout_gates）」，修正 agent 把「number of gates driven by X」一律答成遞移錐大小的系統性錯誤。`check_answers.py` 的 `"Fanout Gates:\s*(-?\d+)"` 判讀 regex 對應 `count_fanout` action 的獨立輸出行，不受本次 `get_node_info` 欄位改名影響。
+- **`find_paths` 0 條結果被誤答為「存在路徑」**（已修復，2026-07-07，官方 Q&A P1-5）：`EDAEngine.find_paths`（`engine.py`）在 C++ 回傳 `"No paths found."` 時，現在會把結論前置為 `"ANSWER: NO — No paths found."` 再回傳給 LLM，讓「路徑是否存在」類問題的判定直接寫在工具輸出裡，避免小模型無視 0 條結果、自行捏造「是」的回答（test13/test16 曾各出現此錯誤）。`planner.py` KEY RULES 同步加入明文規則。
 
 ---
 
