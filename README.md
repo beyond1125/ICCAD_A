@@ -36,6 +36,7 @@ ICCAD_A/
 │   ├── check_answers.py       # Analysis-answer correctness grader
 │   ├── netlist_oracle.py      # Independent oracle used by check_answers.py
 │   ├── grader_sim.py          # Faithful single-case grader simulator (debugging)
+│   ├── package_submission.py  # Builds the self-contained TSRI delivery package
 │   └── run_tests.py           # Legacy pexpect-based runner
 │
 ├── testcase/                  # Test cases (test01–test40)
@@ -57,7 +58,7 @@ ICCAD_A/
 ├── cada1066_alpha             # Contest entry point (executable wrapper)
 ├── main.py                    # System entry point
 ├── config.yaml                # Runtime configuration (model, API provider)
-├── Dockerfile                 # Multi-stage build (ABC + parser + runtime)
+├── Dockerfile                 # Dev-only build repro (NOT the delivery path — see Delivery below)
 └── requirements.txt
 ```
 
@@ -91,6 +92,37 @@ OPENAI_API_KEY=your_key_here
 cd tools && git clone https://github.com/berkeley-abc/abc.git
 cd abc && make
 ```
+
+## Delivery (TSRI submission)
+
+Per the official contest Q&A (A5.1/A6.1, revised — `docs/CONTEST_QA.md`),
+**Docker submissions are not supported**: the program must run directly on
+the TSRI evaluation machine, and evaluation-time network access is limited
+to the model provider APIs (no `pip install`). `Dockerfile` /
+`docker-compose.yml` are therefore **development-only tools** (local
+reproducible builds, CI) — they are not the delivery path.
+
+The actual deliverable is built by `scripts/package_submission.py`, which
+produces a self-contained `dist/cada1066_alpha_pkg/` directory: runtime code,
+vendored Python dependencies (`pip install --target`, not a venv — venvs
+hardcode the build machine's interpreter path and break when moved), a
+freshly-compiled `parser_cpp`, and a prebuilt Berkeley ABC binary under
+`tools/abc/abc`. Copy that directory to the TSRI machine and run it with a
+compatible system `python3` — no further install step, no network access
+needed beyond the configured model API.
+
+```bash
+python3 scripts/package_submission.py        # -> dist/cada1066_alpha_pkg/
+./dist/cada1066_alpha_pkg/cada1066_alpha -config dist/cada1066_alpha_pkg/config.yaml
+```
+
+See `dist/cada1066_alpha_pkg/PACKAGING.md` (generated) for the build
+machine's Python/arch/glibc fingerprint, TSRI prerequisites, and the smoke
+test command; see `docs/Technical_specification_document.md` §9.3 for the
+full packaging design and honest compatibility caveats (compiled wheels like
+`pydantic-core` are version/arch-specific — the documented fallback is
+rebuilding `vendor/` on a matching machine, or PyInstaller as a
+higher-risk alternative).
 
 ## Usage
 

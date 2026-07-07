@@ -31,5 +31,9 @@ tools/abc
 /abc/
 venv
 
+# packaging output (scripts/package_submission.py) — large build artifact,
+# regenerate on demand, never commit
+dist/
+
 # Claude Code local overrides (personal, not shared)
 .claude/settings.local.json

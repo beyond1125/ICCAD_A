@@ -14,6 +14,7 @@
 |版本|日期|修改人|修改內容摘要|
 |---|---|---|---|
 |v1.0|2026-07-06|cada1066 團隊|依程式碼現況重寫全文|
+|v1.1|2026-07-07|cada1066 團隊|P0-1（docs/PLAN_QA_fixes.md）：新增 §9.3 打包交付；依官方 Q&A A5.1/A6.1（docs/CONTEST_QA.md）將 Docker 降級為開發工具，正式交付改為 `scripts/package_submission.py` 產出的自包目錄|
 
 ### 關聯文件
 
@@ -417,6 +418,75 @@ docker build -t cada1066 .
 `.dockerignore` 排除 `.git`、`venv`、`tools/abc`（避免主機端已建置的 ABC 誤入 build context）、`verification_runs`、`__pycache__`、`*.pyc`、`.env`、`A_20260212.pdf`、`testcase/*/*.log`、`testcase/*/*_out.v`。
 
 **注意**：本開發機為共用機器且無 docker group 權限，實際 `docker build`/`docker run` 需請管理員協助執行，本節內容基於靜態檔案分析。
+
+**狀態（2026-07-07 起）**：依官方 Q&A A5.1/A6.1 修訂版（docs/CONTEST_QA.md）——
+**Docker 交付不受評測支援**，程式必須能在 TSRI 機器上直接執行，且評測時網路
+僅開放 model API（不能 `pip install`）。Dockerfile／docker-compose.yml 因此
+**降級為開發環境重現工具**（本機驗證建置流程、CI 參考用），不再是正式交付
+路徑；正式交付改用 §9.3 的自包目錄打包。
+
+### 9.3 打包交付（`scripts/package_submission.py`，P0-1）
+
+正式交付產物是 `scripts/package_submission.py` 產出的 `dist/cada1066_alpha_pkg/`
+自包目錄，可直接複製到 TSRI 機器執行，除系統 `python3`（版本/架構需與打包機
+相容，見下）外不需任何額外安裝步驟：
+
+```
+dist/cada1066_alpha_pkg/
+├── cada1066_alpha              # entry point：./cada1066_alpha -config <config>
+├── main.py, config.yaml, requirements.txt
+├── PACKAGING.md                 # 打包機指紋、TSRI 前提、冒煙測試指令
+├── src/                         # 執行期程式碼（不含 __pycache__）
+│   └── eda_engine/parser/parser_cpp   # 打包時現場編譯，非隨碼庫提交
+├── vendor/                      # `pip install --target` 產出（非 venv）
+└── tools/abc/abc                # 預編譯 Berkeley ABC 執行檔
+```
+
+**打包步驟**（`package_submission.py` 依序執行）：
+
+1. 複製執行期程式碼：`main.py`、`config.yaml`、`requirements.txt`、`src/`
+   （過濾 `__pycache__`/`*.pyc`）。
+2. 現場執行 `scripts/build_parser.py` 編譯 `parser_cpp`，複製進包內同一相對
+   路徑（`src/eda_engine/parser/parser_cpp`）——`engine.py` 的
+   `_find_parser_binary()` 依賴此相對位置。
+3. 複製預編譯 ABC 執行檔至 `tools/abc/abc`——`engine.py` 的
+   `_find_abc_binary()` 向上walk尋找 `abc/abc` 或 `tools/abc/abc`，此相對
+   路徑是必要的。
+4. `python3 -m pip install --target <pkg>/vendor -r requirements.txt`——
+   刻意**不用 venv**：venv 會連結／寫死回建置時的直譯器絕對路徑，換機器就
+   壞；`--target` 只是把可匯入的套件放進一個目錄，任何相容的直譯器透過
+   `PYTHONPATH` 就能用。安裝後清除 `vendor/` 內 pip 產生的 `__pycache__`。
+5. 產生 `cada1066_alpha` 入口 wrapper：解析自身所在目錄，
+   `export PYTHONPATH="$DIR/vendor:$PYTHONPATH"`，`exec python3 "$DIR/main.py" "$@"`。
+6. 產生 `PACKAGING.md`：內容包含打包機指紋（`python3 -V`、`uname -m`、
+   glibc 版本）、TSRI 前提條件、冒煙測試指令、相容性風險與 fallback 方案。
+
+**`.env` 不隨包**（內含 API 金鑰，已在 `.gitignore`）——評測環境需自行設定
+`ANTHROPIC_API_KEY`/`OPENAI_API_KEY` 環境變數；`src/utils/config.py` 對
+`${VAR}` 佔位符的展開對真實環境變數同樣有效（見 §3.3 config loader 說明）。
+
+**相容性風險（誠實揭露）**：`vendor/` 內含編譯後的二進位輪子（尤其
+`pydantic_core`，由 `anthropic`/`openai` SDK 間接引入的 Rust extension），
+與打包機的 Python 版本、CPU 架構、glibc 版本綁定。若 TSRI 機器的 `python3`
+與打包機有重大差異（不同 Python minor 版本、不同架構、不同 glibc major
+版本），這些二進位輪子可能無法載入。Fallback（依優先序，均**未實作**，
+僅記錄於 `PACKAGING.md`）：
+1. 在與 TSRI 相容的機器（或對應的 container/chroot）上重跑本腳本，產生
+   相容的 `vendor/`，取代現有版本。
+2. PyInstaller 單檔打包——更自包（連直譯器都打包），但 `anthropic`/`openai`
+   SDK 在部分路徑使用動態 import，相容性需要實測後才能採用；本專案評估為
+   風險較高的備選方案，暫不實作。
+
+**冒煙測試方法**：於乾淨目錄（repo 外）複製打包產物 + 一份 testcase 目錄，
+清空 `PYTHONPATH`/proxy 環境變數，`export ANTHROPIC_API_KEY=...` 後執行
+`./cada1066_alpha_pkg/cada1066_alpha -config cada1066_alpha_pkg/config.yaml`
+跑 test02 全部 4 turn；驗證方式：(a) 4 組 `#RESPONSE`/`#END` 皆出現、
+`test02_out.v`、CWD 的 `test02.log` 均落地；(b) 用主 checkout 的
+`parser_cpp --action write_blif` 分別對原始與輸出網表產生 BLIF，再用
+`tools/abc/abc -q "cec ..."` 驗證功能等價；(c) 交叉核對
+`scripts/check_results.py --case test02`（需要 `tools/abc/abc` 在本 worktree
+可解析——原生沒有時可暫時軟連結至主 checkout 驗證，驗證完畢即移除，不提交）
+回報 `PASS`（equivalence: `EQUIVALENT (ABC cec, flop-cut)`）。
 
 ---
 
