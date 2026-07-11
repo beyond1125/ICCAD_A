@@ -140,6 +140,13 @@ After `reduce_depth` (ABC), constants in the original may already be propagated 
 after ABC already swept. **To confirm:** whether the grader expects these counts pre- or
 post-optimization.
 
+> **官方裁決(2026-07-03 Q&A A21.1,落地 2026-07-11 P1-8)**:「constant」
+> 指**功能恆定**(對所有輸入可證恆 0/1,DFF 初始態 = 0、X 忽略),推翻本節
+> 原本的結構性(1'b0/1'b1 綁定)解讀。現由 `check_const` 工具與
+> `const_propagate --semantics functional` 實作(模擬非恆定見證 + ABC SAT
+> 證明 + DFF-init-0 定點迭代);化簡僅綁定組合可證恆定的網,flop-cut cec
+> 等價性不受影響。本節「計數以優化前或優化後為準」的疑義仍然成立。
+
 ---
 
 ## Analysis tools still needed (teammate's domain)

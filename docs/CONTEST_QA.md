@@ -44,7 +44,7 @@
 
 | # | 官方裁決 | 對既有決策的影響 |
 |---|---|---|
-| A21.1 | 「constant」= **功能恆定**(對所有輸入可證恆 0/1);**DFF 初始態 = 0**,X 忽略 | **推翻 O6 的結構性解讀** — 現行 `const_propagate` 只認結構上綁 1'b0/1'b1;「always 0?」「report gates with constant input」類問題需要 SAT 級功能恆定分析 + DFF-init-0 的時序常數語意(PLAN P1-8) |
+| A21.1 | 「constant」= **功能恆定**(對所有輸入可證恆 0/1);**DFF 初始態 = 0**,X 忽略 | **推翻 O6 的結構性解讀** — **✓ 已完成(P1-8,2026-07-11)**:新 `check_const` 工具(模擬見證 + ABC SAT 證明 + DFF-init-0 定點)回答 always-0/1 類問題;`const_propagate` 加 `semantics='functional'` 供 const 報告/化簡題;僅組合可證恆定會被綁定傳播(flop-cut cec 安全) |
 | A21.2 | cone/深度 = **僅組合邏輯**,DFF.Q 視為 primary input | **確認 O1**(深度 flop 邊界 ✓,引擎與 oracle 已對齊);**挑戰 D4** — 分析類 cone 問題應以組合 cone 作答(oracle 已是此預設 ✓,引擎的 cone 分析工具穿越 DFF,需對齊,PLAN P2-9);transform 用的穿越式 cone 因等價性安全暫維持 |
 | A21.3 | complete enumeration = **逐條列出**;超大結果寫檔 + 回應附路徑 | 與 A16 一致,P1-3(流式落檔完整枚舉)**✓ 已完成(2026-07-11)** |
 | A21.4 | 功能等價是主要評分;次要指標會在 prompt 明示;多種合法改寫時 prompt 會指明優化準則 | 等價優先架構 ✓;cost 逐題讀 prompt(同 A8/A9) |

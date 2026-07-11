@@ -95,7 +95,7 @@ ICCAD 2026 Problem A 要求參賽系統實作一個「自然語言驅動的網�
 │   LLM 工具呼叫迴圈（最多 10 輪）、三道防幻覺 gate、時間/context 預算控管      │
 │   provider 路由（Anthropic / OpenAI）、重試退避                        │
 └───────────────────────────────┬─────────────────────────────────┘
-                                 │ dispatch（41 個工具 → engine 方法）
+                                 │ dispatch（42 個工具 → engine 方法）
 ┌───────────────────────────────▼─────────────────────────────────┐
 │ 執行層  src/eda_engine/engine.py                                  │
 │   session 檔案鏈（_loaded_filepath）、磁碟驗證寫入、扇出約束重執行        │
@@ -166,6 +166,7 @@ stdin 讀入一行
 |---|---|---|---|
 | 請求牆鐘預算 | 270 秒 | `Planner._REQUEST_BUDGET_S`（planner.py:31） | 規格限制每請求 300 秒；保留 30 秒邊際確保仍能送出 `#END` |
 | ABC 呼叫（cec / reduce_depth） | 180 秒 | `engine.py` 兩處 `subprocess.run([abc_path, ...], timeout=180)`（engine.py:457, 778） | 大型設計上 ABC 重構/等價性檢查可能耗時較久，但仍須低於 270 秒外層預算 |
+| 功能恆定分析預算（P1-8） | check_const 110 秒 / functional report-tie 批次 80 秒 / 單次 ABC SAT 20 秒 | `EDAEngine._CONST_BUDGET_S` / `_FUNC_BUDGET_S` / `_SAT_TIMEOUT_S` | 模擬+SAT 證明流程的牆鐘上限;SAT 逾時會被夾到剩餘預算,逾時不視為證明(僅 UNSAT 算恆定),整體低於 270 秒請求預算 |
 | Parser 動作子行程 | 150 秒 | `EDAEngine._ACTION_TIMEOUT_S`（engine.py:26） | 限制如指數級路徑枚舉等無界計算（test12 需要此上限；`eval_harness.py` 內建的獨立 oracle 對同一查詢秒答，凸顯工具本身的逾時是設計問題而非查詢過難） |
 | LLM 迭代上限 | 10 輪 | `Planner._MAX_ITERATIONS`（planner.py:30） | 每請求最多 10 輪 LLM↔工具往返，避免無限迴圈；與時間預算是獨立的兩種終止條件 |
 | LLM 重試退避 | (2, 8, 20) 秒，共 4 次嘗試 | `LLMClient._RETRY_DELAYS_S`（llm_client.py:93） | 對暫時性供應商錯誤（rate limit/overload）指數式退避重試 |
@@ -202,9 +203,9 @@ stdin/stdout 協定由 `IOManager`（`src/utils/io_manager.py`）獨佔實作，
 
 ### 6.2 LLM 工具介面
 
-`tool_spec.py` 定義 41 個結構化工具供 LLM 呼叫，分為四大類：**IO 類**（`load_design`/`write_design`，2 個）、**ANALYSIS 類**（唯讀查詢，不改變 `_loaded_filepath`，21 個）、**TRANSFORM 類**（改變 `_loaded_filepath` 指向，17 個，與 `Planner._TRANSFORM_TOOLS` 集合一致）、**VERIFY 類**（`check_equivalence`，1 個）。完整的工具清單、各工具參數簽名與對應 engine 方法，見 TSD 第 3.4 節工具面規格；本文件不重複列出，僅強調介面設計上的兩個跨工具共用機制：
+`tool_spec.py` 定義 42 個結構化工具供 LLM 呼叫，分為四大類：**IO 類**（`load_design`/`write_design`，2 個）、**ANALYSIS 類**（唯讀查詢，不改變 `_loaded_filepath`，22 個）、**TRANSFORM 類**（改變 `_loaded_filepath` 指向，17 個，與 `Planner._TRANSFORM_TOOLS` 集合一致）、**VERIFY 類**（`check_equivalence`，1 個）。完整的工具清單、各工具參數簽名與對應 engine 方法，見 TSD 第 3.4 節工具面規格；本文件不重複列出，僅強調介面設計上的兩個跨工具共用機制：
 
-- 41 個工具定義與 `Planner._dispatch` 字典**完全一一對應**（無缺漏、無多餘），dispatch 表建構於 `Planner.__init__`。
+- 42 個工具定義與 `Planner._dispatch` 字典**完全一一對應**（無缺漏、無多餘），dispatch 表建構於 `Planner.__init__`。
 - **大結果落地截斷機制**：任何工具的原始輸出經 `Planner._execute_tool` 後，都會通過 `_truncate_large_result` 過濾——超過 `_MAX_RESULT_CHARS = 12000` 字元（約 3000 token，對任何供應商皆安全）的結果，不會整份塞回 LLM 的 context，而是落地為 `<tool_name>_<arg_tag>.log` 檔案（存於已載入設計同目錄），並回傳含 `notice`/`saved_to_file`/樣本欄位的 JSON 摘要。system prompt 明確要求 LLM 必須在回覆中提及 `saved_to_file` 路徑，讓使用者知道完整結果的落地位置。`find_paths` 另有專用的**完整枚舉落檔**路徑（C++ `--paths_out` 流式寫檔，2026-07-11，A16 合規——通用攔截層落的是「截斷後原文」，此處落的是完整清單），細節見第 10 節與 TSD §4.2(2)/§6.1。
 
 ### 6.3 parser_cpp CLI 契約
@@ -213,6 +214,8 @@ stdin/stdout 協定由 `IOManager`（`src/utils/io_manager.py`）獨佔實作，
 
 - **stdout 首行字串為事實 API**：`parser_cpp` 對每個 action 的**輸出首行字串格式**（例如 `load` 的 `"Success. PI: N, PO: N, Gates: N"`、`replace_gate` 的 `"Success"`/`"Failure"`）才是 Python 層實際依賴的介面，而非任何結構化的回傳碼或機器可讀格式（JSON 輸出的少數 action 例外，見 TSD 第 2 節 CLI 表）。這個「輸出字串即 API」的設計沒有 schema 版本控管，任何未來對輸出字串格式的調整都是破壞性變更。
 - **exit code 不可靠，需以字串判斷成敗**：絕大多數 `Graph::` 方法回傳的字串本身內嵌 `"Error: ... not found."` 或 `"Failure: ..."` 前綴，但這些**不是例外、也不設定非零 exit code**——`main.cpp` 對這些呼叫一律 `return 0`。因此上層無法依賴 process exit code 區分「找不到節點」與「成功」，必須解析 stdout 字串內容。歷史教訓：`write`/`write_blif` action 缺少 `--out` 旗標時曾**靜默失敗**（exit code 0、無任何 stdout 輸出）——此問題已於 2026-07-06 修復（補上 `return 1`），但它是第 5.4 節 `verified_writes` 磁碟二次驗證機制誕生的直接理由；該機制保留作為縱深防禦：介面契約以字串為準的本質未變，上層仍以獨立手段（`os.path.isfile`）驗證副作用是否真的發生。
+
+2026-07-11（P1-8）新增五個 action，沿用同一 CLI 契約:`report_stuck_inputs`（`--gate_type --cycles --trials --seed`,列出模擬中從未離開單一值的候選閘輸入,`CAND gate=... input=... stuck=... structural=...` 逐行）、`sim_consts`（`--nets` CSV,回報各網 0/1 觀察次數）、`write_cone_blifs`（`--nets --out_dir [--tie0]`,批次匯出各網組合 cone 的 BLIF 供 ABC SAT）、`list_dffs`（`--scope_net?`,列 DFF 的 Q/D 網名）、`tie_nets_const`（`--assign net=0/1,... --out`,把證明恆定的網綁上常數後回寫）。隨機模擬核心 `run_random_sim` 以一次性稠密節點編號＋扁平閘程式執行(2026-07-11 效能修復:100k 節點 16×64 拍 ~90s → ~5s,舊版逐拍 unordered_map 曾使 test39 整案逾時)。
 
 ### 6.4 ABC 介面
 

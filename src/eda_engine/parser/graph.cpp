@@ -1768,3 +1768,360 @@ std::string Graph::r2r_paths() {
     return ss.str();
 }
 
+
+// ── Functional constant analysis support (P1-8, official Q&A A21.1) ──────
+// "Constant" per the official ruling means FUNCTIONALLY constant (provable
+// for all inputs, DFF initial state = 0, X ignored) — not merely a net tied
+// to 1'b0/1'b1. The SAT proofs run in ABC, driven by the Python engine; the
+// actions below supply everything the engine needs from the netlist in one
+// parse each: single-output flop-cut cone BLIFs (write_cone_blifs), random
+// sequential simulation for cheap non-constancy witnesses (sim_consts,
+// report_stuck_inputs), and DFF D/Q wiring for the init-0 fixed-point
+// iteration (list_dffs).
+
+static std::string blif_sanitize(const std::string& n) {
+    std::string s = n;
+    for (char& c : s) if (c == '[' || c == ']' || c == '\'') c = '_';
+    return s;
+}
+
+static std::vector<std::string> split_csv(const std::string& csv) {
+    std::vector<std::string> out;
+    std::stringstream ss(csv);
+    std::string item;
+    while (std::getline(ss, item, ',')) if (!item.empty()) out.push_back(item);
+    return out;
+}
+
+std::string Graph::write_cone_blifs(const std::string& nets_csv, const std::string& out_dir, const std::string& tie0_csv) {
+    std::vector<std::string> nets = split_csv(nets_csv);
+    if (nets.empty()) return "Error: --nets required for write_cone_blifs.";
+    if (out_dir.empty()) return "Error: --out_dir required for write_cone_blifs.";
+    std::unordered_set<std::string> tie0;
+    for (const auto& t : split_csv(tie0_csv)) tie0.insert(t);
+
+    std::stringstream res;
+    int idx = 0;
+    for (const auto& target : nets) {
+        ++idx;
+        if (!nodes.count(target)) { res << "CONE " << target << " error=not_found\n"; continue; }
+
+        // Collect the combinational fanin cone of `target`. Boundary inputs:
+        // PIs / undriven nets, DFF Q nets (flop-cut), tie0 nets (forced 0),
+        // and the 1'b0/1'b1 constants.
+        std::vector<Node*> cone_gates;
+        std::unordered_set<Node*> seen_gates;
+        std::vector<std::string> boundary;          // free BLIF .inputs
+        std::unordered_set<std::string> seen_nets, bound_set;
+        bool has_c0 = false, has_c1 = false, has_tied = false;
+        std::unordered_set<std::string> tied_here;
+        std::vector<std::string> stack{target};
+        seen_nets.insert(target);
+        while (!stack.empty()) {
+            std::string net = stack.back(); stack.pop_back();
+            if (net == "1'b0") { has_c0 = true; continue; }
+            if (net == "1'b1") { has_c1 = true; continue; }
+            if (tie0.count(net)) { has_tied = true; tied_here.insert(net); continue; }
+            Node* n = nodes.count(net) ? nodes[net] : nullptr;
+            Node* driver = nullptr;
+            if (n) for (Node* g : n->inputs)
+                if (g->type == NodeType::GATE) { driver = g; break; }
+            if (!driver || driver->gate_type == GateType::DFF) {
+                if (bound_set.insert(net).second) boundary.push_back(net);
+                continue;
+            }
+            if (seen_gates.insert(driver).second) cone_gates.push_back(driver);
+            for (Node* in : driver->inputs)
+                if (seen_nets.insert(in->name).second) stack.push_back(in->name);
+        }
+
+        // Emit both polarities: <k>.blif proves "can o be 1", <k>_inv.blif
+        // proves "can o be 0" (UNSAT on one side = constant of the other).
+        std::string base = out_dir + "/cone_" + std::to_string(idx);
+        for (int inv = 0; inv <= 1; ++inv) {
+            std::ofstream ofs(base + (inv ? "_inv.blif" : ".blif"));
+            if (!ofs) return "Error: cannot open cone BLIF for writing under " + out_dir;
+            ofs << ".model cone" << idx << (inv ? "_inv" : "") << "\n.inputs";
+            std::vector<std::string> sorted_bound = boundary;
+            std::sort(sorted_bound.begin(), sorted_bound.end());
+            for (const auto& b : sorted_bound) ofs << " " << blif_sanitize(b);
+            ofs << "\n.outputs o\n";
+            if (has_c0) ofs << ".names " << blif_sanitize("1'b0") << "_c0\n";
+            if (has_c1) ofs << ".names " << blif_sanitize("1'b1") << "_c1\n1\n";
+            for (const auto& t : tied_here) ofs << ".names " << blif_sanitize(t) << "\n";
+            auto sig = [&](const std::string& nm) -> std::string {
+                if (nm == "1'b0") return blif_sanitize(nm) + "_c0";
+                if (nm == "1'b1") return blif_sanitize(nm) + "_c1";
+                return blif_sanitize(nm);
+            };
+            for (Node* g : cone_gates) {
+                if (g->outputs.empty()) continue;
+                ofs << ".names";
+                for (Node* in : g->inputs) ofs << " " << sig(in->name);
+                ofs << " " << blif_sanitize(g->outputs[0]->name) << "\n";
+                size_t k = g->inputs.size();
+                switch (g->gate_type) {
+                    case GateType::BUF: ofs << "1 1\n"; break;
+                    case GateType::NOT: ofs << "0 1\n"; break;
+                    case GateType::AND: ofs << std::string(k, '1') << " 1\n"; break;
+                    case GateType::NOR: ofs << std::string(k, '0') << " 1\n"; break;
+                    case GateType::OR:  for (size_t j = 0; j < k; ++j) { std::string c(k, '-'); c[j] = '1'; ofs << c << " 1\n"; } break;
+                    case GateType::NAND:for (size_t j = 0; j < k; ++j) { std::string c(k, '-'); c[j] = '0'; ofs << c << " 1\n"; } break;
+                    case GateType::XOR: case GateType::XNOR: {
+                        bool want_odd = (g->gate_type == GateType::XOR);
+                        for (size_t m = 0; m < (1u << k); ++m) {
+                            int par = 0; std::string c(k, '0');
+                            for (size_t b = 0; b < k; ++b) if (m & (1u << b)) { c[b] = '1'; par ^= 1; }
+                            if ((par == 1) == want_odd) ofs << c << " 1\n";
+                        }
+                        break;
+                    }
+                    default: return "Error: unsupported gate type in cone of " + target;
+                }
+            }
+            ofs << ".names " << sig(target) << " o\n" << (inv ? "0 1" : "1 1") << "\n.end\n";
+        }
+        res << "CONE " << target << " gates=" << cone_gates.size()
+            << " file=" << base << ".blif file_inv=" << base << "_inv.blif\n";
+        (void)has_tied;
+    }
+    return res.str();
+}
+
+// Random sequential simulation, DFF initial state = 0 (official ruling
+// A21.1), X ignored (every PI gets a random 0/1 each cycle). Fills `counts`
+// with (times seen 0, times seen 1) per net node. Simulation is a SOUND
+// witness of non-constancy (a value actually reached under init-0 semantics)
+// — the cheap filter before any SAT proof attempt.
+void Graph::run_random_sim(int cycles, int trials, unsigned seed,
+                           std::unordered_map<Node*, std::pair<long, long>>& counts) {
+    if (topological_order.empty()) compute_topological_sort();
+    // Simple deterministic LCG so results are reproducible across platforms.
+    unsigned long long rng = seed ? seed : 0x2545F4914F6CDD1DULL;
+    auto rnd_bit = [&]() -> int {
+        rng = rng * 6364136223846793005ULL + 1442695040888963407ULL;
+        return (int)((rng >> 33) & 1ULL);
+    };
+
+    // Dense node indexing. The per-cycle inner loop must be pure array
+    // arithmetic: an unordered_map<Node*,int> value store costs a hash op
+    // per input read / output write / count bump, which put a 16x64-cycle
+    // scan at ~90s on a 100k-node netlist. Slot N is a permanent-zero
+    // sentinel so a node missing from all_nodes reads as 0 (the old
+    // undriven -> 0 behavior).
+    const int N = (int)all_nodes.size();
+    std::unordered_map<Node*, int> idx;
+    idx.reserve((size_t)N * 2);
+    for (int i = 0; i < N; ++i) idx[all_nodes[i]] = i;
+    auto idx_of = [&](Node* n) -> int {
+        auto it = idx.find(n);
+        return it == idx.end() ? N : it->second;
+    };
+
+    // Static per-cycle work, precompiled once: constant loads, DFF Q/D slot
+    // pairs, PI randomization order (topological order — keeps the RNG
+    // stream identical to the map-based version), flat gate program.
+    std::vector<std::pair<int, int>> const_loads;  // (slot, value)
+    if (nodes.count("1'b0")) const_loads.push_back({idx_of(nodes["1'b0"]), 0});
+    if (nodes.count("1'b1")) const_loads.push_back({idx_of(nodes["1'b1"]), 1});
+
+    std::vector<std::pair<int, int>> dff_qd;       // (Q slot, D slot; D==N if absent)
+    for (Node* n : all_nodes)
+        if (n->type == NodeType::GATE && n->gate_type == GateType::DFF && !n->outputs.empty())
+            dff_qd.push_back({idx_of(n->outputs[0]),
+                              n->inputs.empty() ? N : idx_of(n->inputs[0])});
+
+    // preset = slots the map version pre-loaded into val each cycle (consts
+    // + DFF state); a PI in that set did NOT consume a random bit.
+    std::vector<char> preset((size_t)N + 1, 0);
+    for (auto& p : const_loads) preset[p.first] = 1;
+    for (auto& p : dff_qd) preset[p.first] = 1;
+
+    struct Op { GateType gt; int out; int in_begin; int in_count; };
+    std::vector<int> pis;
+    std::vector<Op> prog;
+    std::vector<int> op_inputs;
+    for (Node* n : topological_order) {
+        if (n->type == NodeType::PRIMARY_INPUT) {
+            int i = idx_of(n);
+            if (i < N && !preset[i]) pis.push_back(i);
+            continue;
+        }
+        if (n->type != NodeType::GATE || n->gate_type == GateType::DFF) continue;
+        size_t k = n->inputs.size();
+        if (k == 0 || n->outputs.empty()) continue;
+        switch (n->gate_type) {
+            case GateType::BUF: case GateType::NOT: case GateType::AND:
+            case GateType::NAND: case GateType::OR: case GateType::NOR:
+            case GateType::XOR: case GateType::XNOR: break;
+            default: continue;
+        }
+        prog.push_back({n->gate_type, idx_of(n->outputs[0]),
+                        (int)op_inputs.size(), (int)k});
+        for (size_t i = 0; i < k; ++i) op_inputs.push_back(idx_of(n->inputs[i]));
+    }
+
+    // written = exactly the slots the map version's per-cycle val ended up
+    // holding (deduped); counts are reported for these only.
+    std::vector<int> written;
+    std::vector<char> seen((size_t)N + 1, 0);
+    auto mark = [&](int i) { if (i < N && !seen[i]) { seen[i] = 1; written.push_back(i); } };
+    for (auto& p : const_loads) mark(p.first);
+    for (auto& p : dff_qd) mark(p.first);
+    for (int i : pis) mark(i);
+    for (auto& op : prog) mark(op.out);
+
+    std::vector<int8_t> val((size_t)N + 1, 0);
+    std::vector<int8_t> state(dff_qd.size(), 0);
+    std::vector<long> c0((size_t)N, 0), c1((size_t)N, 0);
+    for (int t = 0; t < trials; ++t) {
+        // DFF init 0: every Q net starts each trial at 0.
+        std::fill(state.begin(), state.end(), (int8_t)0);
+        for (int c = 0; c < cycles; ++c) {
+            std::fill(val.begin(), val.end(), (int8_t)0);  // fresh cycle, like val.clear()
+            for (auto& p : const_loads) val[p.first] = (int8_t)p.second;
+            for (size_t i = 0; i < dff_qd.size(); ++i) val[dff_qd[i].first] = state[i];
+            for (int i : pis) val[i] = (int8_t)rnd_bit();
+            for (const Op& op : prog) {
+                const int* in = op_inputs.data() + op.in_begin;
+                const int k = op.in_count;
+                int v = 0;
+                switch (op.gt) {
+                    case GateType::BUF: v = val[in[0]]; break;
+                    case GateType::NOT: v = 1 - val[in[0]]; break;
+                    case GateType::AND: { v = 1; for (int i = 0; i < k; ++i) v &= val[in[i]]; break; }
+                    case GateType::NAND:{ v = 1; for (int i = 0; i < k; ++i) v &= val[in[i]]; v = 1 - v; break; }
+                    case GateType::OR:  { v = 0; for (int i = 0; i < k; ++i) v |= val[in[i]]; break; }
+                    case GateType::NOR: { v = 0; for (int i = 0; i < k; ++i) v |= val[in[i]]; v = 1 - v; break; }
+                    case GateType::XOR: { v = 0; for (int i = 0; i < k; ++i) v ^= val[in[i]]; break; }
+                    case GateType::XNOR:{ v = 0; for (int i = 0; i < k; ++i) v ^= val[in[i]]; v = 1 - v; break; }
+                    default: v = 0; break;
+                }
+                val[op.out] = (int8_t)v;
+            }
+            for (int i : written) { if (val[i]) ++c1[i]; else ++c0[i]; }
+            // Clock edge: Q <- D (inputs[0] is the D net by convention).
+            for (size_t i = 0; i < dff_qd.size(); ++i) state[i] = val[dff_qd[i].second];
+        }
+    }
+    for (int i : written) {
+        auto& cnt = counts[all_nodes[i]];
+        cnt.first += c0[i];
+        cnt.second += c1[i];
+    }
+}
+
+std::string Graph::sim_consts(const std::string& nets_csv, int cycles, int trials, unsigned seed) {
+    std::vector<std::string> nets = split_csv(nets_csv);
+    if (nets.empty()) return "Error: --nets required for sim_consts.";
+    std::unordered_map<Node*, std::pair<long, long>> counts;
+    run_random_sim(cycles, trials, seed, counts);
+    std::stringstream ss;
+    for (const auto& nm : nets) {
+        if (!nodes.count(nm)) { ss << "SIM " << nm << " error=not_found\n"; continue; }
+        auto it = counts.find(nodes[nm]);
+        long s0 = it == counts.end() ? 0 : it->second.first;
+        long s1 = it == counts.end() ? 0 : it->second.second;
+        ss << "SIM " << nm << " saw0=" << s0 << " saw1=" << s1 << "\n";
+    }
+    return ss.str();
+}
+
+std::string Graph::list_dffs(const std::string& scope_net) {
+    // Without --scope_net: every DFF. With it: only DFFs in the SEQUENTIAL
+    // transitive fanin of that net (walk backward crossing DFF D edges) —
+    // the exact set whose init-0 fixed point can influence the net.
+    std::unordered_set<Node*> scope;
+    bool scoped = !scope_net.empty();
+    if (scoped) {
+        if (!nodes.count(scope_net)) return "Error: Node not found.";
+        std::vector<Node*> st{nodes[scope_net]};
+        std::unordered_set<Node*> seen{nodes[scope_net]};
+        while (!st.empty()) {
+            Node* n = st.back(); st.pop_back();
+            if (n->type == NodeType::GATE && n->gate_type == GateType::DFF) scope.insert(n);
+            for (Node* in : n->inputs) if (seen.insert(in).second) st.push_back(in);
+        }
+    }
+    std::stringstream ss;
+    int count = 0;
+    for (Node* n : all_nodes) {
+        if (n->type != NodeType::GATE || n->gate_type != GateType::DFF) continue;
+        if (scoped && !scope.count(n)) continue;
+        ++count;
+        ss << "DFF " << n->name
+           << " D=" << (n->inputs.empty() ? "-" : n->inputs[0]->name)
+           << " Q=" << (n->outputs.empty() ? "-" : n->outputs[0]->name) << "\n";
+    }
+    return "Found " + std::to_string(count) + " DFFs:\n" + ss.str();
+}
+
+std::string Graph::report_stuck_inputs(const std::string& gate_type_str, int cycles, int trials, unsigned seed) {
+    // Candidate filter for functional constant-input reports: a gate input
+    // net that TOGGLED in simulation is provably not constant; the ones that
+    // never toggled are the only SAT-proof candidates. `structural=yes`
+    // marks nets already tied to 1'b0/1'b1 (no proof needed).
+    GateType gt = GateType::UNKNOWN;
+    if (!gate_type_str.empty()) {
+        std::string lf = gate_type_str;
+        for (char& c : lf) c = (char)std::tolower((unsigned char)c);
+        gt = string_to_gate_type(lf);
+        if (gt == GateType::UNKNOWN) return "Error: unknown gate type '" + gate_type_str + "'.";
+    }
+    std::unordered_map<Node*, std::pair<long, long>> counts;
+    run_random_sim(cycles, trials, seed, counts);
+    std::stringstream ss;
+    int cand = 0;
+    for (Node* n : all_nodes) {
+        if (n->type != NodeType::GATE || n->gate_type == GateType::DFF) continue;
+        if (gt != GateType::UNKNOWN && n->gate_type != gt) continue;
+        for (Node* in : n->inputs) {
+            bool structural = (in->name == "1'b0" || in->name == "1'b1");
+            long s0 = 0, s1 = 0;
+            auto it = counts.find(in);
+            if (it != counts.end()) { s0 = it->second.first; s1 = it->second.second; }
+            if (!structural && s0 > 0 && s1 > 0) continue;  // toggled -> not constant
+            int stuck = structural ? (in->name == "1'b1" ? 1 : 0) : (s1 > 0 ? 1 : 0);
+            ss << "CAND gate=" << n->name << " type=" << gate_type_to_string(n->gate_type)
+               << " input=" << in->name << " stuck=" << stuck
+               << " structural=" << (structural ? "yes" : "no") << "\n";
+            ++cand;
+        }
+    }
+    return "Found " + std::to_string(cand) + " candidate constant inputs:\n" + ss.str();
+}
+
+std::string Graph::tie_nets_const(const std::string& assign_csv) {
+    // Rewire every consumer of each given net to the 1'b0/1'b1 constant node
+    // instead. Used by functional constant propagation (P1-8): the caller
+    // must only pass nets PROVEN combinationally constant (flop-cut SAT with
+    // free flop states) — tying merely-sequentially-constant nets would make
+    // the flop-cut cec model report a false inequivalence.
+    auto assigns = split_csv(assign_csv);
+    if (assigns.empty()) return "Error: --assign required (format: net=0,net=1).";
+    int tied = 0, rewired = 0;
+    for (const auto& a : assigns) {
+        auto eq = a.find('=');
+        if (eq == std::string::npos) return "Error: bad assignment '" + a + "' (want net=0 or net=1).";
+        std::string nm = a.substr(0, eq), vs = a.substr(eq + 1);
+        if (vs != "0" && vs != "1") return "Error: bad const value in '" + a + "'.";
+        if (!nodes.count(nm)) return "Error: net '" + nm + "' not found.";
+        Node* x = nodes[nm];
+        Node* c = get_or_create_node(vs == "0" ? "1'b0" : "1'b1", NodeType::SIGNAL);
+        if (x == c) continue;
+        std::unordered_set<Node*> seen;
+        for (Node* consumer : x->outputs) {
+            if (!seen.insert(consumer).second) continue;
+            for (auto& in : consumer->inputs)
+                if (in == x) { in = c; ++rewired; }
+            for (auto& pc : consumer->pin_conns)
+                if (pc.signal == nm && pc.edge_dir == 1) { pc.signal = c->name; pc.is_const = true; }
+            c->outputs.push_back(consumer);
+        }
+        x->outputs.clear();
+        ++tied;
+    }
+    topological_order.clear();
+    return "Success: tied " + std::to_string(tied) + " net(s) to constants ("
+         + std::to_string(rewired) + " consumer connections rewired).";
+}

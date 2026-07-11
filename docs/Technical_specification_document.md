@@ -37,7 +37,7 @@
 **模組名稱**：cada1066（ICCAD 2026 Problem A 參賽系統）
 **功能範圍**：
 
-- LLM 代理人（`src/agent/`）：以 41 個結構化工具驅動 LLM，逐行讀取 stdin 請求，依 `#RESPONSE <id>` / `#END <id>` 協定輸出，並具備防幻覺三閘門（write gate、zero-tool gate、transform gate）與 context 收縮機制。
+- LLM 代理人（`src/agent/`）：以 42 個結構化工具驅動 LLM，逐行讀取 stdin 請求，依 `#RESPONSE <id>` / `#END <id>` 協定輸出，並具備防幻覺三閘門（write gate、zero-tool gate、transform gate）與 context 收縮機制。
 - C++ 網表引擎（`src/eda_engine/parser/`）：以指標鄰接表表示閘級網表，提供 Verilog 剖析/輸出、拓撲排序、深度與路徑分析、緩衝樹插入、基底重映射、結構化簡（懸空掃除、重複合併、反閘收合、常數傳播）、BLIF 匯出入（正反器切割模型）等 30 餘種 CLI action。
 - 等價性驗證與深度最佳化：透過 Berkeley ABC 的 `cec`（形式等價驗證）與 `resyn2`/`balance`（深度最佳化）子行程。
 - 評估工具鏈（`scripts/`）：協定完成度檢查、硬性需求檢查、無金標目標導向指標、分析類回答正確性裁決，共四層。
@@ -88,7 +88,7 @@
 │         ▼                          │                                  │
 │  ┌─────────────────────────────────┴────────────────────┐             │
 │  │                      Planner                          │             │
-│  │  - _dispatch: Dict[str, Callable]  (41 個工具→engine)   │             │
+│  │  - _dispatch: Dict[str, Callable]  (42 個工具→engine)   │             │
 │  │  - _conversation_history                               │             │
 │  │  - 三道防幻覺 gate（write / zero-tool / transform）       │             │
 │  │  - context 收縮（主動 + 反應式）                          │             │
@@ -157,8 +157,8 @@
 | `Config` | `src/utils/config.py` | `provider`, `openai`, `anthropic`, `generation` | YAML 解析、`${ENV_VAR}` 展開、`.env` 載入 |
 | `IOManager` | `src/utils/io_manager.py` | `case_name`, `response_id`, `_log_files`（雙 sink） | stdin 逐行協定輸出、`#RESPONSE`/`#END` 格式化、CWD 與 testcase 目錄雙份 log |
 | `LLMClient` | `src/agent/llm_client.py` | `prompt_tokens`/`completion_tokens`/`total_tokens`/`api_calls` | 供應商路由（OpenAI/Anthropic）、格式轉換、重試退避、token 記帳 |
-| `Planner` | `src/agent/planner.py` | `_dispatch`（41 工具對映）、`_conversation_history` | agentic loop、三道防幻覺 gate、context 收縮、修正上限 |
-| `EDAEngine` | `src/eda_engine/engine.py` | `_loaded_filepath`, `_original_filepath`, `_session_dir`, `verified_writes`, `_max_fanout_constraint` | 41 個工具方法的實作、session 檔案鏈接、ABC 子行程呼叫、磁碟驗證寫入 |
+| `Planner` | `src/agent/planner.py` | `_dispatch`（42 工具對映）、`_conversation_history` | agentic loop、三道防幻覺 gate、context 收縮、修正上限 |
+| `EDAEngine` | `src/eda_engine/engine.py` | `_loaded_filepath`, `_original_filepath`, `_session_dir`, `verified_writes`, `_max_fanout_constraint` | 42 個工具方法的實作、session 檔案鏈接、ABC 子行程呼叫、磁碟驗證寫入 |
 
 ### 3.3 方法規格（節選，完整工具清單見 3.4 節）
 
@@ -172,9 +172,9 @@
 | `Graph::compute_topological_sort` | `() -> void`（C++） | Kahn 演算法，DFF 輸出邊視為切斷點，快取進 `topological_order` |
 | `Graph::write_blif` | `(const std::string& filename) -> void`（C++） | 正反器切割模型：DFF Q→`.inputs`，D→`.outputs`（`__D_<inst>`） |
 
-### 3.4 工具面規格（LLM 可呼叫之 41 個工具）
+### 3.4 工具面規格（LLM 可呼叫之 42 個工具）
 
-`tool_spec.py` 的 `EDA_TOOLS` 共 41 個工具定義，與 `Planner._dispatch` 完全一一對應。
+`tool_spec.py` 的 `EDA_TOOLS` 共 42 個工具定義，與 `Planner._dispatch` 完全一一對應。
 
 **IO 類（2）**
 
@@ -183,7 +183,7 @@
 | `load_design` | `filepath` | `load_design` |
 | `write_design` | `filepath` | `write_design`（磁碟驗證寫入） |
 
-**ANALYSIS 類（21，唯讀，不改變 `_loaded_filepath`）**
+**ANALYSIS 類（22，唯讀，不改變 `_loaded_filepath`）**
 
 | 工具 | 參數 |
 |---|---|
@@ -200,6 +200,7 @@
 | `flipflops_by_clock` | `clock` |
 | `max_pi_to_dff_depth` / `list_floating` / `highest_fanout_pi` / `list_nodes` / `list_pio` / `r2r_paths` / `deepest_cone_output` | — |
 | `signal_depends_on` | `target`, `source` |
+| `check_const` | `net`（功能恆定判定,A21.1:隨機時序模擬找非恆定見證 → ABC SAT 證恆 0/恆 1,DFF 初始態 0 定點;verdict 快取以 `_loaded_filepath` 為鍵） |
 
 **TRANSFORM 類（17，改變 `_loaded_filepath` 指向；同集合即 `Planner._TRANSFORM_TOOLS`）**
 
@@ -218,7 +219,7 @@
 | `reconstruct_netlist_to_basis` | `target_basis` |
 | `restructure_to_depth` | `node`, `target_depth` |
 | `optimize_outputs_to_depth` | `max_depth` |
-| `const_propagate` | `mode?`, `gate_type?`, `const_value?` |
+| `const_propagate` | `mode?`, `gate_type?`, `const_value?`, `semantics?`（`structural` 預設僅認 1'b0/1'b1 綁定;`functional` 依 A21.1 另以模擬+SAT 證明恆定輸入,report 與 simplify 皆適用） |
 
 **VERIFY 類（1）**
 
@@ -257,6 +258,8 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 | 結構重複合併（雜湊簽章 + 定點） | `graph.cpp:889-936` | 每輪 O(V·平均扇入)，輪數上界 O(V) | 合併計算相同函式的重複閘 |
 | 反閘收合（定點） | `graph.cpp:1174-1216` | O(V·L)，L 為反閘鏈長 | 收合 `NOT(NOT(x))` 背對背模式 |
 | 常數傳播 | `graph.cpp:940-1169` | O(V+E) 每輪，定點迭代 | 沿常數輸入化簡邏輯閘 |
+| 隨機時序模擬（稠密槽位編譯） | `graph.cpp` `run_random_sim` | 預編譯 O(V+E)；每拍 O(V+E) 純陣列運算（trials×cycles 拍） | DFF 初始態 0 的非恆定見證（A21.1）；供 `sim_consts`/`report_stuck_inputs`/`check_const` 共用。節點一次性稠密編號＋扁平化閘程式，取代逐拍 unordered_map（100k 節點 16×64 拍 ~90s → ~5s，2026-07-11） |
+| 功能恆定證明流程（sim 濾波 + ABC SAT + DFF-init-0 定點） | `engine.py` `_prove_const0_flops`/`_prove_nets_const`/`check_const` | 每輪 SAT ≤20s、單網總預算 110s、report/tie 批次預算 80s | A21.1 功能恆定:模擬淘汰可觸發的網，餘者以 cone BLIF + `strash; sat` 證 UNSAT；D 端恆 0 之 DFF 其 Q 綁 0 後再迭代至不動點 |
 | BLIF 匯出（flop-cut） | `graph.cpp:436-508` | O(V+E) + O(2^k) XOR/XNOR（k 通常=2） | 產生供 ABC 使用的正反器切割組合邏輯 |
 | BLIF 匯入（真值表查表） | `graph.cpp:330-434` | O(2^nin) 每 `.names` 區塊 | 將 ABC 最佳化後的 BLIF 還原為 `Graph` 原生閘 |
 | 防幻覺三閘門 | `planner.py:269-304` | O(1) 判斷 | write/zero-tool/transform 三道 gate，修正上限 2 次 |
@@ -295,6 +298,8 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 ---
 
 ## 5. 資料結構（Data Structures）
+
+**check_const verdict 快取**（P1-8）:`EDAEngine` 以「當前 `_loaded_filepath`」為鍵快取每個網的功能恆定判定,同一設計狀態下重複詢問不重付模擬+SAT 成本;任何 transform 都會重指 `_loaded_filepath`(session 檔案鏈),故舊鍵天然失效,不存在跨版本誤用。
 
 **Node 指標鄰接表與所有權模型**：`Graph::all_nodes`（`std::vector<Node*>`）是唯一的所有權容器，插入順序即解析順序（決定 `list_nodes` 輸出順序）；`Graph::nodes`（`std::unordered_map<std::string, Node*>`）僅為名稱→節點的查找索引，不擁有記憶體。`Graph` 解構子遍歷 `all_nodes` 逐一 `delete`。每個 `Node` 自帶其鄰居的 **裸指標鄰接表**：`std::vector<Node*> inputs` / `outputs`，有向邊以雙向記錄（`from->outputs` 推入 `to`，同時 `to->inputs` 推入 `from`）。刪除節點的所有演算法（`sweep_dangling`、`merge_duplicate_gates`、`collapse_inverters`、`const_propagate`）遵循同一模式：先從 `all_nodes` 篩出 keep/drop 兩組、清理 keep 組中對 drop 節點的殘留指標、`nodes.erase()`、最後才 `delete`——先斷邊、後刪除，避免懸空指標。
 

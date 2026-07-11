@@ -18,6 +18,7 @@ import os
 import re
 import sys
 import tempfile
+import time
 from typing import Any, Dict, Optional, List
 
 # Per-action cap on parser subprocess calls. A single unbounded call (e.g.
@@ -90,6 +91,9 @@ class EDAEngine:
         # Absolute paths of every write verified on disk. The planner checks this
         # to refuse answering a write request when no file was actually produced.
         self.verified_writes: List[str] = []
+        # check_const verdict cache, keyed by loaded filepath (transforms
+        # re-point _loaded_filepath, so stale entries are never reused).
+        self._const_cache: Dict[str, Dict[str, str]] = {}
 
     def _session_path(self, tag: str, ext: str = "v") -> str:
         self._xform_seq += 1
@@ -651,15 +655,35 @@ class EDAEngine:
         )
 
     def const_propagate(self, mode: str = "propagate",
-                        gate_type: str = "", const_value: str = "") -> str:
-        """Detect and simplify gates with constant inputs (1'b0, 1'b1).
+                        gate_type: str = "", const_value: str = "",
+                        semantics: str = "structural") -> str:
+        """Detect and simplify gates with constant inputs.
 
         mode='report' scans without modifying; mode='propagate' applies
         simplification with cascading. Optional gate_type and const_value
         filters narrow which gates are processed.
+
+        semantics='structural' (default) only sees inputs literally tied to
+        1'b0/1'b1. semantics='functional' (official contest ruling A21.1)
+        additionally detects inputs PROVEN constant — random sequential
+        simulation filters candidates, ABC SAT proves them. Reported proofs
+        are split into combinational (flop-cut safe) and sequential
+        (DFF-init-0 fixed point); only combinationally-proven nets are ever
+        tied/propagated, so flop-cut equivalence (cec) is preserved.
         """
         if not self._loaded_filepath:
             return "Error: No design loaded."
+        if semantics == "functional":
+            if mode == "report":
+                return self._const_report_functional(gate_type, const_value)
+            prefix = self._tie_proven_consts(gate_type, const_value)
+            if prefix.startswith("Error"):
+                return prefix
+            return prefix + self._const_propagate_structural(mode, gate_type, const_value)
+        return self._const_propagate_structural(mode, gate_type, const_value)
+
+    def _const_propagate_structural(self, mode: str, gate_type: str,
+                                    const_value: str) -> str:
         kwargs: Dict[str, str] = {"mode": mode}
         if gate_type:
             kwargs["gate_type"] = gate_type
@@ -834,6 +858,364 @@ class EDAEngine:
                 f"ABC reports: {first}"
             )
         return f"Equivalence check inconclusive. ABC output: {out[:400]}"
+
+    # ── Functional constant analysis (P1-8, official Q&A A21.1) ───────────
+    # "Constant" per the official ruling = FUNCTIONALLY constant (provable
+    # for all inputs, DFF initial state 0, X ignored) — not merely a net
+    # structurally tied to 1'b0/1'b1. Strategy: random sequential simulation
+    # gives a sound NON-constancy witness cheaply; ABC SAT on a flop-cut
+    # cone BLIF gives the constancy PROOF, strengthened by a DFF-init-0
+    # fixed point (flops whose D is provably always 0 keep Q = 0 forever,
+    # so their Q is tied to 0 before the next round of proofs).
+
+    _SIM_TRIALS = 16
+    _SIM_CYCLES = 64
+    _SAT_TIMEOUT_S = 20          # per ABC sat call
+    _CONST_MAX_DFFS = 256        # fixpoint scope cap (skipping stays sound)
+    _CONST_FIXPOINT_ROUNDS = 8
+    _CONST_BUDGET_S = 110        # overall wall clock per check_const call
+
+    def _abc_sat(self, blif_path: str, timeout: Optional[float] = None) -> Optional[bool]:
+        """Can output `o` of this single-output BLIF be 1?
+
+        True = satisfiable, False = proven impossible (UNSAT), None =
+        ABC unavailable / timed out / unparseable (never treated as proof).
+        """
+        if not os.path.isfile(self._abc_path):
+            return None
+        try:
+            r = subprocess.run(
+                [self._abc_path, "-q", f"read_blif {blif_path}; strash; sat"],
+                capture_output=True, text=True,
+                timeout=timeout if timeout is not None else self._SAT_TIMEOUT_S,
+            )
+        except Exception:  # noqa: BLE001 - timeout or spawn failure
+            return None
+        out = (r.stdout + r.stderr).upper()
+        # Order matters: "UNSATISFIABLE" contains "SATISFIABLE".
+        if "UNSATISFIABLE" in out:
+            return False
+        if "SATISFIABLE" in out:
+            return True
+        return None
+
+    @staticmethod
+    def _parse_sim_counts(raw: str) -> Dict[str, tuple]:
+        return {
+            m.group(1): (int(m.group(2)), int(m.group(3)))
+            for m in re.finditer(r"^SIM\s+(\S+)\s+saw0=(\d+)\s+saw1=(\d+)", raw, re.M)
+        }
+
+    def _prove_const0_flops(self, scope_net: str, deadline: float) -> set:
+        """DFF-init-0 fixed point: return Q nets provably stuck at 0.
+
+        Sound by induction: every flop starts at 0; if a flop's D is provably
+        0 for all inputs whenever the already-proven set is 0, its Q never
+        leaves 0. Bounded (DFF-count cap, round cap, wall-clock deadline) —
+        bailing out early only weakens the result, never falsifies it.
+        """
+        raw = self._run_action("list_dffs", scope_net=scope_net)
+        dffs = [
+            (i, d, q)
+            for i, d, q in re.findall(r"^DFF\s+(\S+)\s+D=(\S+)\s+Q=(\S+)", raw, re.M)
+            if d != "-" and q != "-"
+        ]
+        if not dffs or len(dffs) > self._CONST_MAX_DFFS:
+            return set()
+        # Simulation pre-filter: a D net observed at 1 can never be proven
+        # always-0 — drop it before paying for any SAT call.
+        d_nets = list(dict.fromkeys(d for _, d, _ in dffs))
+        sim = self._parse_sim_counts(
+            self._run_action(
+                "sim_consts", nets=",".join(d_nets),
+                trials=self._SIM_TRIALS, cycles=self._SIM_CYCLES, seed=1,
+            )
+        )
+        cand = [(i, d, q) for i, d, q in dffs if sim.get(d, (0, 0))[1] == 0]
+        proven_q: set = set()
+        for _ in range(self._CONST_FIXPOINT_ROUNDS):
+            pending = [(i, d, q) for i, d, q in cand if q not in proven_q]
+            if not pending or time.monotonic() > deadline:
+                break
+            cone_dir = tempfile.mkdtemp(prefix="cones_", dir=self._session_dir)
+            raw = self._run_action(
+                "write_cone_blifs",
+                nets=",".join(dict.fromkeys(d for _, d, _ in pending)),
+                out_dir=cone_dir, tie0=",".join(sorted(proven_q)),
+            )
+            files = {
+                m.group(1): m.group(2)
+                for m in re.finditer(r"^CONE\s+(\S+)\s+gates=\d+\s+file=(\S+)", raw, re.M)
+            }
+            changed = False
+            for _, d, q in pending:
+                remaining = deadline - time.monotonic()
+                if remaining <= 1:
+                    break
+                blif = files.get(d)
+                if blif and self._abc_sat(
+                        blif, timeout=min(self._SAT_TIMEOUT_S, remaining)) is False:
+                    proven_q.add(q)  # D can never be 1
+                    changed = True
+            if not changed:
+                break
+        return proven_q
+
+    _FUNC_MAX_SAT_NETS = 48      # SAT-proof cap per functional const scan
+    _FUNC_BUDGET_S = 80          # wall clock per functional report/tie pass
+    _FUNC_SEQ_RESERVE_S = 30     # skip the sequential phase with less left
+    # Every parser action re-parses the netlist; on a big design each extra
+    # action costs its parse time again. When one probe action exceeds this,
+    # the functional flow degrades (halved SAT cap, no sequential phase) so
+    # the whole pass stays well inside the request budget.
+    _FUNC_BIG_PARSE_S = 6.0
+
+    def _functional_const_candidates(self, gate_type: str) -> List[Dict[str, str]]:
+        """Simulation-filtered candidate constant inputs of matching gates.
+
+        Each entry: gate, type, net, stuck ('0'/'1'), structural ('yes'/'no').
+        A net that toggled in simulation is provably not constant and never
+        appears here — only literal ties and never-toggled nets survive.
+        """
+        raw = self._run_action(
+            "report_stuck_inputs", gate_type=gate_type or "",
+            trials=self._SIM_TRIALS, cycles=self._SIM_CYCLES, seed=1,
+        )
+        return [
+            m.groupdict()
+            for m in re.finditer(
+                r"^CAND gate=(?P<gate>\S+) type=(?P<type>\S+) input=(?P<net>\S+)"
+                r" stuck=(?P<stuck>[01]) structural=(?P<structural>yes|no)",
+                raw, re.M,
+            )
+        ]
+
+    def _prove_nets_const(self, nets: List[str], net_stuck: Dict[str, int],
+                          tie0: set, deadline: float) -> Dict[str, int]:
+        """SAT-prove that nets are stuck at their observed value.
+
+        Returns {net: proven value}. A net is only ever claimed constant on a
+        real UNSAT verdict for the opposite value; timeouts prove nothing.
+        """
+        proven: Dict[str, int] = {}
+        # The cone-BLIF batch re-parses the whole netlist (one subprocess) —
+        # do not even start it on an exhausted budget.
+        if not nets or time.monotonic() > deadline:
+            return proven
+        cone_dir = tempfile.mkdtemp(prefix="cones_", dir=self._session_dir)
+        raw = self._run_action(
+            "write_cone_blifs", nets=",".join(nets), out_dir=cone_dir,
+            tie0=",".join(sorted(tie0)),
+        )
+        entries = {
+            m.group(1): (m.group(2), m.group(3))
+            for m in re.finditer(
+                r"^CONE\s+(\S+)\s+gates=\d+\s+file=(\S+)\s+file_inv=(\S+)", raw, re.M)
+        }
+        for n in nets:
+            remaining = deadline - time.monotonic()
+            if remaining <= 1:
+                break
+            entry = entries.get(n)
+            if not entry:
+                continue
+            f_pos, f_inv = entry
+            v = net_stuck[n]
+            # stuck at v means the opposite value must be UNSAT:
+            # v==0 -> "can o be 1" (f_pos) UNSAT; v==1 -> "can o be 0" (f_inv) UNSAT.
+            # SAT timeout is clamped to the remaining budget so one slow
+            # instance cannot push the whole flow far past its deadline.
+            if self._abc_sat(f_pos if v == 0 else f_inv,
+                             timeout=min(self._SAT_TIMEOUT_S, remaining)) is False:
+                proven[n] = v
+        return proven
+
+    def _collect_stuck_nets(self, gate_type: str, const_value: str):
+        """Shared candidate gathering for the functional report/tie flows.
+
+        Returns (cands, net_stuck, nets, slow_design) — slow_design flags a
+        netlist whose per-action parse cost makes further multi-action
+        phases too expensive.
+        """
+        t0 = time.monotonic()
+        cands = self._functional_const_candidates(gate_type)
+        slow_design = (time.monotonic() - t0) > self._FUNC_BIG_PARSE_S
+        want = int(const_value) if const_value else None
+        net_stuck: Dict[str, int] = {}
+        for c in cands:
+            if c["structural"] == "yes":
+                continue
+            v = int(c["stuck"])
+            if want is not None and v != want:
+                continue
+            net_stuck.setdefault(c["net"], v)
+        cap = self._FUNC_MAX_SAT_NETS // (2 if slow_design else 1)
+        nets = list(net_stuck)[:cap]
+        return cands, net_stuck, nets, slow_design
+
+    def _const_report_functional(self, gate_type: str, const_value: str) -> str:
+        """Report gates with constant inputs under FUNCTIONAL semantics."""
+        import json
+
+        deadline = time.monotonic() + self._FUNC_BUDGET_S
+        structural_raw = self._const_propagate_structural("report", gate_type, const_value)
+        try:
+            structural = json.loads(structural_raw)
+        except ValueError:
+            return structural_raw
+        cands, net_stuck, nets, slow_design = self._collect_stuck_nets(gate_type, const_value)
+        proven_comb = self._prove_nets_const(nets, net_stuck, set(), deadline)
+        rest = [n for n in nets if n not in proven_comb]
+        proven_seq: Dict[str, int] = {}
+        # The sequential phase costs a DFF listing + another simulation +
+        # SAT rounds (several netlist re-parses on big designs) — only enter
+        # it with real budget left, and never on a slow-parsing design.
+        if rest and not slow_design and time.monotonic() < deadline - self._FUNC_SEQ_RESERVE_S:
+            proven0 = self._prove_const0_flops("", deadline)
+            if proven0:
+                proven_seq = self._prove_nets_const(rest, net_stuck, proven0, deadline)
+        func_gates = []
+        for c in cands:
+            n = c["net"]
+            if n in proven_comb:
+                proof = "sat_combinational"
+            elif n in proven_seq:
+                proof = "sat_sequential_init0"
+            else:
+                continue
+            func_gates.append({
+                "name": c["gate"], "type": c["type"], "const_input": n,
+                "const_value": int(c["stuck"]), "proof": proof,
+            })
+        result = {
+            "mode": "report",
+            "semantics": "functional",
+            "structurally_constant_gates": structural.get("const_gates", []),
+            "functionally_constant_gates": func_gates,
+            "total_found": structural.get("total_found", 0) + len(func_gates),
+            "note": (
+                "constant = provably fixed for every input, DFF initial state 0 "
+                "(official semantics). 'structurally' = input tied to a 1'b0/1'b1 "
+                "literal; 'functionally' = input net PROVEN constant by SAT."
+            ),
+        }
+        unproven = [n for n in nets if n not in proven_comb and n not in proven_seq]
+        if unproven:
+            result["unproven_candidates"] = unproven[:10]
+            result["note"] += (
+                " Some never-toggling nets could not be proven and are NOT "
+                "listed as constant."
+            )
+        return json.dumps(result, ensure_ascii=False, indent=2)
+
+    def _tie_proven_consts(self, gate_type: str, const_value: str) -> str:
+        """Tie combinationally-proven constant inputs to literals (pre-pass).
+
+        Only combinational proofs (free flop states) are tied — tying a net
+        that is constant merely under the DFF-init-0 fixed point would break
+        the flop-cut cec model used for all equivalence grading.
+        Returns a note string, or 'Error...' on failure.
+        """
+        deadline = time.monotonic() + self._FUNC_BUDGET_S
+        _, net_stuck, nets, _slow = self._collect_stuck_nets(gate_type, const_value)
+        proven_comb = self._prove_nets_const(nets, net_stuck, set(), deadline)
+        if not proven_comb:
+            return ""
+        work = self._session_path("tieconst")
+        assign = ",".join(f"{n}={v}" for n, v in sorted(proven_comb.items()))
+        res = self._run_action("tie_nets_const", assign=assign, out=work)
+        if not res.startswith("Success") or not os.path.isfile(work):
+            return f"Error tying functionally-constant nets: {res}"
+        self._loaded_filepath = work
+        return (
+            f"[functional pre-pass] {len(proven_comb)} input net(s) proven "
+            f"constant by SAT (combinational, equivalence-safe) and tied to "
+            f"literals: {assign}. "
+        )
+
+    def check_const(self, net: str) -> str:
+        """Is a net functionally constant (always 0 / always 1)?
+
+        Official semantics (contest Q&A A21.1): provable over all inputs,
+        DFF initial state 0, X ignored. The result string leads with the
+        verdict so the LLM copies a correct conclusion.
+        """
+        if not self._loaded_filepath:
+            return "Error: No design loaded."
+        net = net.strip()
+        if net in ("1'b0", "1'b1"):
+            v = "0" if net == "1'b0" else "1"
+            return f"ANSWER: CONSTANT {v} — {net} is the constant {v} literal itself."
+        cache = self._const_cache.setdefault(self._loaded_filepath, {})
+        if net in cache:
+            return cache[net]
+        deadline = time.monotonic() + self._CONST_BUDGET_S
+
+        sim_raw = self._run_action(
+            "sim_consts", nets=net,
+            trials=self._SIM_TRIALS, cycles=self._SIM_CYCLES, seed=1,
+        )
+        if sim_raw.startswith("Error"):
+            return sim_raw
+        counts = self._parse_sim_counts(sim_raw)
+        if net not in counts:
+            return f"Error: Node {net} not found."
+        s0, s1 = counts[net]
+        if s0 > 0 and s1 > 0:
+            res = (
+                f"ANSWER: NOT CONSTANT — random sequential simulation (DFF initial "
+                f"state 0) drove net {net} to BOTH values: 0 in {s0} and 1 in {s1} "
+                f"of {s0 + s1} sampled cycles. It is neither always 0 nor always 1."
+            )
+            cache[net] = res
+            return res
+
+        proven0 = self._prove_const0_flops(net, deadline)
+        cone_dir = tempfile.mkdtemp(prefix="cones_", dir=self._session_dir)
+        raw = self._run_action(
+            "write_cone_blifs", nets=net, out_dir=cone_dir,
+            tie0=",".join(sorted(proven0)),
+        )
+        m = re.search(r"^CONE\s+\S+\s+gates=(\d+)\s+file=(\S+)\s+file_inv=(\S+)", raw, re.M)
+        if not m:
+            return f"Error: cone extraction failed for {net}: {raw[:200]}"
+        cone_gates, f_pos, f_inv = int(m.group(1)), m.group(2), m.group(3)
+        can_be_1 = self._abc_sat(f_pos)
+        can_be_0 = self._abc_sat(f_inv)
+        tie_note = (
+            f" ({len(proven0)} flop(s) first proven stuck-at-0 by the DFF-init-0 "
+            f"fixed point and tied to 0.)" if proven0 else ""
+        )
+        observed = "1" if s1 > 0 else "0"
+        if can_be_1 is False and can_be_0 is not False:
+            res = (
+                f"ANSWER: YES, CONSTANT 0 — net {net} is ALWAYS 0: SAT proves no "
+                f"input assignment can make it 1 (combinational cone of "
+                f"{cone_gates} gates, DFF initial state 0).{tie_note}"
+            )
+        elif can_be_0 is False and can_be_1 is not False:
+            res = (
+                f"ANSWER: YES, CONSTANT 1 — net {net} is ALWAYS 1: SAT proves no "
+                f"input assignment can make it 0 (combinational cone of "
+                f"{cone_gates} gates, DFF initial state 0).{tie_note}"
+            )
+        elif can_be_1 is None or can_be_0 is None:
+            return (
+                f"INCONCLUSIVE — the SAT check for net {net} timed out or ABC was "
+                f"unavailable. Simulation observed only {observed} across {s0 + s1} "
+                f"sampled cycles, but that is NOT a proof. Do not claim the net is "
+                f"constant."
+            )
+        else:
+            res = (
+                f"ANSWER: NOT PROVEN CONSTANT (treat as NOT constant) — SAT found "
+                f"assignments driving net {net} to both 0 and 1 over the flop-cut "
+                f"state space.{tie_note} Simulation only ever observed {observed}, "
+                f"but with no proof of constancy the correct answer to 'is it "
+                f"always {observed}?' is No."
+            )
+        cache[net] = res
+        return res
 
     def health_check(self) -> List[str]:
         """Return human-readable warnings for missing runtime dependencies.

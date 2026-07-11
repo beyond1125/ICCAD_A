@@ -373,6 +373,28 @@ EDA_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "check_const",
+            "description": (
+                "Determine whether a net/output is FUNCTIONALLY constant — "
+                "always 0 or always 1 for every possible input, with "
+                "flip-flops starting at 0. Uses random sequential simulation "
+                "plus an ABC SAT proof. Call this for 'is output X always "
+                "0?', 'is X constant?', 'can X ever become 1?'. Copy the "
+                "ANSWER verdict from the result; do not guess from cone size "
+                "or structure."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "net": {"type": "string", "description": "Net/output name to check (e.g. 'n16')."},
+                },
+                "required": ["net"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "highest_fanout_pi",
             "description": (
                 "Find the primary input with the highest fanout (including clock/reset "
@@ -716,7 +738,11 @@ EDA_TOOLS: List[Dict[str, Any]] = [
                 "Detect and simplify gates with constant inputs. Use mode='report' to "
                 "list without modifying, mode='propagate' to apply simplification. Can "
                 "filter by gate_type and const_value. Handles cascading: if simplification "
-                "creates new constant signals, they are propagated iteratively."
+                "creates new constant signals, they are propagated iteratively. "
+                "For 'report gates with constant inputs' questions use "
+                "semantics='functional' (official contest semantics): it also finds "
+                "inputs PROVEN always-0/always-1 by simulation + SAT, not only "
+                "inputs literally tied to 1'b0/1'b1."
             ),
             "parameters": {
                 "type": "object",
@@ -734,6 +760,16 @@ EDA_TOOLS: List[Dict[str, Any]] = [
                         "type": "string",
                         "enum": ["0", "1"],
                         "description": "Optional: only process gates whose constant input has this value (0 or 1).",
+                    },
+                    "semantics": {
+                        "type": "string",
+                        "enum": ["structural", "functional"],
+                        "description": (
+                            "structural (default): only inputs tied to 1'b0/1'b1 literals. "
+                            "functional: additionally detect inputs proven constant for every "
+                            "possible input (DFF initial state 0) via simulation + SAT — use "
+                            "this for report/simplify questions about constant inputs."
+                        ),
                     },
                 },
                 "required": [],

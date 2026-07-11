@@ -2,8 +2,8 @@
 
 > 狀態:**執行中**(2026-07-07 擬定,依據 docs/CONTEST_QA.md)。
 > 已完成:P1-4 + P1-5(2026-07-07, a979281)、P0-2(2026-07-08, 831c97e)、
-> P0-1(2026-07-08, 4c6d765)、P1-3(2026-07-11)。
-> 待做:P1-8(最大項)、P2-9、P2-6、P2-7(可選),收尾全量 sweep + 四層驗證。
+> P0-1(2026-07-08, 4c6d765)、P1-3(2026-07-11)、P1-8(2026-07-11)。
+> 待做:P2-9、P2-6、P2-7(可選),收尾全量 sweep + 四層驗證。
 
 ## P0-1 交付打包改道:廢 Docker、改 TSRI 直跑自包式(A5.1/A6.1)
 
@@ -89,7 +89,19 @@ answer-gate 攔不到 — 有呼叫工具、只是無視結果)。
 CORRECT 不退步。
 **工作量**:小。
 
-## P1-8 功能恆定分析(A21.1 — 推翻 O6 的結構性解讀)
+## P1-8 功能恆定分析(A21.1 — 推翻 O6 的結構性解讀)— ✅ 完成(2026-07-11)
+
+> 落地紀錄:`check_const` 工具 + `const_propagate --semantics functional`
+> 依方案 (i)(ii) 實作(C++ 新 action:`report_stuck_inputs`/`sim_consts`/
+> `write_cone_blifs`/`list_dffs`/`tie_nets_const`;engine 預算 110s/80s/20s)。
+> 效能修復:`run_random_sim` 原以逐拍 unordered_map 實作,test39(5.6MB)
+> 單次掃描 ~90s 導致整案 900s TIMEOUT;改為稠密槽位編譯後 ~5s(輸出逐位元
+> 組相同),test39 481s OK。驗證:test31 Q8 vs oracle `always_const` 一致
+> (皆非恆定);test32/36/38/39/40 重跑全 PASS+EQUIV(test36/38/40 由 7/3
+> 基線的 GOAL-FAIL 轉 PASS);check_results 40/40 無硬性違規;test39 OR
+> stuck=1 候選抽 4 網 oracle 皆 None,與「0 可證明+10 未證明」的誠實回答
+> 一致。後續升級路徑(pdr/scleanup 精確時序證明)見 chip「Add sequential
+> BLIF export; wire scleanup/pdr into check_const」。
 
 **問題**:官方裁決「constant」= 功能恆定(SAT 可證恆 0/1),DFF 初始態 = 0、
 X 忽略。現行 `const_propagate` 只認結構上綁 1'b0/1'b1;受影響題型:

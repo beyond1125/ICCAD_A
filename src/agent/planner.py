@@ -86,7 +86,7 @@ _SYSTEM_PROMPT = (
     "to formally verify the result before writing the design, and report the outcome. "
     "Do not discuss scoring, judging, or the evaluation process."
 
-    "ANALYSIS tools: count_gates, list_nodes, get_node_info, get_fanin_cone, get_fanout_cone, count_fanin_gates, count_fanout_gates, get_fanin_depth, analyze_depth, analyze_critical_path, find_paths, list_pio (PI/PO listing with bit widths — zero params), deepest_cone_output (which output has deepest fanin cone — zero params), r2r_paths (list all register-to-register paths through combinational logic — zero params), count_gates_in_cone (per-type gate breakdown within the fanin/fanout cone of a node)."
+    "ANALYSIS tools: count_gates, list_nodes, get_node_info, get_fanin_cone, get_fanout_cone, count_fanin_gates, count_fanout_gates, get_fanin_depth, analyze_depth, analyze_critical_path, find_paths, list_pio (PI/PO listing with bit widths — zero params), deepest_cone_output (which output has deepest fanin cone — zero params), r2r_paths (list all register-to-register paths through combinational logic — zero params), count_gates_in_cone (per-type gate breakdown within the fanin/fanout cone of a node), check_const (is a net ALWAYS 0 or ALWAYS 1 — functional proof via simulation + SAT, DFF initial state 0)."
     "TRANSFORM tools: replace_gate (single gate type change), insert_buffers (fanout-based), insert_dedicated_buffers (per-signal), reduce_depth (ABC optimization), remove_dangling, rename_node, decompose_gates_in_cone (cone-scoped decomposition), collapse_inverters (remove back-to-back NOT pairs — zero params, just call it), merge_equivalent_gates (remove structural duplicates — zero params), convert_cone_to_basis (cone to target basis), reconstruct_netlist_to_basis (ENTIRE design to target basis), restructure_to_depth, optimize_outputs_to_depth, const_propagate (simplify gates with constant inputs; mode='report' to scan, 'propagate' to simplify with cascading; optional gate_type and const_value filters)."
     "IO tools: load_design, write_design."
     "VERIFY tools: check_equivalence."
@@ -106,6 +106,13 @@ _SYSTEM_PROMPT = (
     "whole design)."
     " Path existence questions: if find_paths reports 0 paths / 'No paths "
     "found', the answer MUST be No."
+    " 'Is output X always 0/1?', 'is X constant?', 'can X ever be 1?': use "
+    "check_const and copy its ANSWER verdict — 'constant' means FUNCTIONALLY "
+    "constant (provable for every input, flip-flops starting at 0), which "
+    "cone size or structural inspection can NOT determine."
+    " 'Report gates with constant inputs' / 'simplify gates with constant "
+    "inputs': call const_propagate with semantics='functional' (constant "
+    "means functionally constant, not only tied to a 1'b0/1'b1 literal)."
 )
 
 
@@ -163,6 +170,7 @@ class Planner:
             "r2r_paths": engine.r2r_paths,
             "list_pio": engine.list_pio,
             "deepest_cone_output": engine.deepest_cone_output,
+            "check_const": engine.check_const,
         }
 
     # ------------------------------------------------------------------ public

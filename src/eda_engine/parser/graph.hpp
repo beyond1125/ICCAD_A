@@ -64,6 +64,11 @@ public:
     std::string list_pio();
     std::string deepest_cone_output();
     std::string r2r_paths();
+    std::string write_cone_blifs(const std::string& nets_csv, const std::string& out_dir, const std::string& tie0_csv);
+    std::string tie_nets_const(const std::string& assign_csv);
+    std::string sim_consts(const std::string& nets_csv, int cycles, int trials, unsigned seed);
+    std::string list_dffs(const std::string& scope_net);
+    std::string report_stuck_inputs(const std::string& gate_type_str, int cycles, int trials, unsigned seed);
 
 private:
     void find_all_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, std::vector<std::vector<Node*>>& all_paths, const std::unordered_set<Node*>& can_reach);
@@ -71,6 +76,8 @@ private:
     int count_fanin_gates_recursive(Node* curr, std::unordered_set<Node*>& visited);
     int count_fanout_gates_recursive(Node* curr, std::unordered_set<Node*>& visited);
     void get_cone_recursive(Node* curr, std::unordered_set<Node*>& visited, bool backward);
+    void run_random_sim(int cycles, int trials, unsigned seed,
+                        std::unordered_map<Node*, std::pair<long, long>>& counts);
 };
 
 #endif // GRAPH_HPP

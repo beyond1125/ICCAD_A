@@ -54,6 +54,22 @@ int main(int argc, char** argv) {
         std::cout << "Paths: " << c << std::endl;
     } else if (action == "list_paths") {
         std::cout << g.find_all_paths(args["--start"], args["--end"], args["--avoid"], args["--paths_out"]) << std::endl;
+    } else if (action == "write_cone_blifs") {
+        std::cout << g.write_cone_blifs(args["--nets"], args["--out_dir"], args["--tie0"]) << std::endl;
+    } else if (action == "sim_consts") {
+        std::cout << g.sim_consts(args["--nets"], int_flag(args, "--cycles", 64),
+                                  int_flag(args, "--trials", 16),
+                                  (unsigned)int_flag(args, "--seed", 1)) << std::endl;
+    } else if (action == "tie_nets_const") {
+        std::string r = g.tie_nets_const(args["--assign"]);
+        if (r.rfind("Success", 0) == 0 && args.count("--out")) VerilogWriter::write_verilog(g, args["--out"]);
+        std::cout << r << std::endl;
+    } else if (action == "list_dffs") {
+        std::cout << g.list_dffs(args["--scope_net"]) << std::endl;
+    } else if (action == "report_stuck_inputs") {
+        std::cout << g.report_stuck_inputs(args["--gate_type"], int_flag(args, "--cycles", 64),
+                                           int_flag(args, "--trials", 16),
+                                           (unsigned)int_flag(args, "--seed", 1)) << std::endl;
     } else if (action == "count_fanin") {
         int c = g.count_fanin_gates(args["--node"]);
         std::cout << "Fanin Gates: " << c << std::endl;
