@@ -166,7 +166,8 @@ stdin 讀入一行
 |---|---|---|---|
 | 請求牆鐘預算 | 270 秒 | `Planner._REQUEST_BUDGET_S`（planner.py:31） | 規格限制每請求 300 秒；保留 30 秒邊際確保仍能送出 `#END` |
 | ABC 呼叫（cec / reduce_depth） | 180 秒 | `engine.py` 兩處 `subprocess.run([abc_path, ...], timeout=180)`（engine.py:457, 778） | 大型設計上 ABC 重構/等價性檢查可能耗時較久，但仍須低於 270 秒外層預算 |
-| 功能恆定分析預算（P1-8） | check_const 110 秒 / functional report-tie 批次 80 秒 / 單次 ABC SAT 20 秒 | `EDAEngine._CONST_BUDGET_S` / `_FUNC_BUDGET_S` / `_SAT_TIMEOUT_S` | 模擬+SAT 證明流程的牆鐘上限;SAT 逾時會被夾到剩餘預算,逾時不視為證明(僅 UNSAT 算恆定),整體低於 270 秒請求預算 |
+| 功能恆定分析預算（P1-8） | check_const 110 秒 / functional report-tie 批次 80 秒 / 單次 ABC SAT 20 秒 | `EDAEngine._CONST_BUDGET_S` / `_FUNC_BUDGET_S` / `_SAT_TIMEOUT_S` | 模擬+SAT 證明流程的牆鐘上限;SAT 逾時會被夾到剩餘預算（含 check_const 尾端的 flop-cut 對,2026-07-12 起）,逾時不視為證明(僅 UNSAT 算恆定),整體低於 270 秒請求預算 |
+| ABC 時序通道預算（2026-07-12） | scleanup 管線 30 秒 / pdr `-T` 30 秒（子行程 +15 秒寬限）/ pdr 前保留 40 秒 | `EDAEngine._SEQ_ABC_TIMEOUT_S` / `_PDR_TIMEOUT_S` / `_PDR_RESERVE_S` | check_const 的時序證明通道（scleanup 三值模擬 → pdr）;pdr 的 `-T` 夾至「剩餘預算 − 40 秒保留」,UNDECIDED/逾時不證明任何事且不得餓死後續 flop-cut SAT 後備;scleanup 全管線實測 ~0.7 秒 @16050 latches（test39） |
 | Parser 動作子行程 | 150 秒 | `EDAEngine._ACTION_TIMEOUT_S`（engine.py:26） | 限制如指數級路徑枚舉等無界計算（test12 需要此上限；`eval_harness.py` 內建的獨立 oracle 對同一查詢秒答，凸顯工具本身的逾時是設計問題而非查詢過難） |
 | LLM 迭代上限 | 10 輪 | `Planner._MAX_ITERATIONS`（planner.py:30） | 每請求最多 10 輪 LLM↔工具往返，避免無限迴圈；與時間預算是獨立的兩種終止條件 |
 | LLM 重試退避 | (2, 8, 20) 秒，共 4 次嘗試 | `LLMClient._RETRY_DELAYS_S`（llm_client.py:93） | 對暫時性供應商錯誤（rate limit/overload）指數式退避重試 |
@@ -217,14 +218,17 @@ stdin/stdout 協定由 `IOManager`（`src/utils/io_manager.py`）獨佔實作，
 
 2026-07-11（P1-8）新增五個 action，沿用同一 CLI 契約:`report_stuck_inputs`（`--gate_type --cycles --trials --seed`,列出模擬中從未離開單一值的候選閘輸入,`CAND gate=... input=... stuck=... structural=...` 逐行）、`sim_consts`（`--nets` CSV,回報各網 0/1 觀察次數）、`write_cone_blifs`（`--nets --out_dir [--tie0]`,批次匯出各網組合 cone 的 BLIF 供 ABC SAT）、`list_dffs`（`--scope_net?`,列 DFF 的 Q/D 網名）、`tie_nets_const`（`--assign net=0/1,... --out`,把證明恆定的網綁上常數後回寫）。隨機模擬核心 `run_random_sim` 以一次性稠密節點編號＋扁平閘程式執行(2026-07-11 效能修復:100k 節點 16×64 拍 ~90s → ~5s,舊版逐拍 unordered_map 曾使 test39 整案逾時)。
 
+2026-07-12 新增 `write_seq_blif`（`--out <file> [--expose <csv>] [--expose_only 1]`）:時序 BLIF 匯出,每個 DFF 一行 `.latch <D-net> <Q-net> 0`（初始值 0）,`.inputs` 僅實體 PI,`.outputs` 為實體 PO（`--expose_only 1` 時省略）加上每個 `--expose` 網的 BUF 型 `.names` 別名（`__expose_<net>`;項目前綴 `!` 表反相,別名為 `__expose_inv_<net>`,cover `0 1`）。回傳 `SEQBLIF inputs=.. outputs=.. latches=.. dup_q_dropped=.. file=..` 加每個 expose 一行 `EXPOSE <item> po=<alias>`;expose 網不存在回 `Error: expose net '...' not found.`。註冊 PO（PO 即 DFF Q 網）在此模型合法（就是 latch 輸出）;多 DFF 共驅一 Q 網時取解析順序最後者發 `.latch`（與 `run_random_sim` 的 last-writer-wins 一致,其餘計入 `dup_q_dropped`,test39 實測 96 個）;常數作專用 `.names` 節點（`__const0` 空 cover、`__const1` 單列 `1`）。**語意邊界:DFF RN/SN/CK 控制腳一律忽略**——與 `run_random_sim`/flop-cut 模型同一慣例,無新增健全性缺口,但引用此模型之證明時必須一併陳述。用途:check_const 的 ABC 時序證明通道（scleanup/pdr,見 6.4 節）。
+
 ### 6.4 ABC 介面
 
-系統以兩種用途呼叫 Berkeley ABC，兩者共用同一個橋接格式：**flop-cut BLIF**（正反器切割 BLIF）。橋接規則（`Graph::write_blif`，詳見 TSD 4.2 節(1)）：每個 DFF 的 **Q 輸出網路映射為 BLIF 的 `.inputs`**（代表「上一狀態」），每個 DFF 的 **D 輸入映射為新的 `.outputs` 項 `__D_<inst>`**（代表「下一狀態」）；若某 PO net 恰好也是某 DFF 的 Q net，該 PO 從 `.outputs` 省略（因等價性已由對應 `__D_<inst>` 涵蓋）。這個橋接把時序電路轉換成 ABC 能處理的純組合邏輯，兩種用途分別是：
+系統以三種用途呼叫 Berkeley ABC，前兩者共用同一個橋接格式：**flop-cut BLIF**（正反器切割 BLIF）。橋接規則（`Graph::write_blif`，詳見 TSD 4.2 節(1)）：每個 DFF 的 **Q 輸出網路映射為 BLIF 的 `.inputs`**（代表「上一狀態」），每個 DFF 的 **D 輸入映射為新的 `.outputs` 項 `__D_<inst>`**（代表「下一狀態」）；若某 PO net 恰好也是某 DFF 的 Q net，該 PO 從 `.outputs` 省略（因等價性已由對應 `__D_<inst>` 涵蓋）。這個橋接把時序電路轉換成 ABC 能處理的純組合邏輯，兩種用途分別是：
 
 1. **`cec`（形式等價驗證）**：`check_equivalence` 對「目前 `_loaded_filepath`」與「參照網表（預設 `_original_filepath`）」各自匯出 flop-cut BLIF，交給 ABC `cec` 做 SAT-based 組合等價驗證。
 2. **`resyn2`（深度最佳化）**：`reduce_depth` 匯出目前設計的 flop-cut BLIF，跑 `strash; balance; resyn2; balance` 序列，再透過 `load_logic_blif` + `rebuild` action 把最佳化後的 AIG 讀回並重新接上原有的正反器與控制腳。
+3. **時序引擎（`scleanup`/`pdr`，2026-07-12，check_const 專用）**：橋接格式改用 **時序 BLIF**（`write_seq_blif`，DFF 保留為 `.latch <D> <Q> 0`，見 6.3 節）——ABC 讀不了本專案的 Verilog（named-pin dff），此匯出器就是唯一橋樑。`_seq_const_channel` 以單次 property-miter 匯出（目標網或其反相為唯一 PO）餵兩個引擎：`strash; scleanup; write_blif` 後 miter PO 化為字面常數 0 即為恆定**證明**（自全零初始態的三值模擬是健全的可達性過近似）；無果且預算足則 `pdr -T`，`Property proved.` 為歸納證明、`asserted in frame N` 為真時序反例（比 flop-cut SAT 的自由態解更強的非恆定見證）、`UNDECIDED` 不證明任何事。指令須用真名 `scleanup`（別名 `scl` 需 `-q` 不載入的 abc.rc）。**用途限定**：時序判定僅改變 check_const 的回報文字，絕不回饋 `const_propagate` 的 tie/propagate 路徑——綁定僅時序恆定的網會讓下方 flop-cut `cec` 誤判不等價，直接違反功能等價的硬性要求。
 
-flop-cut 模型的健全性有明確邊界：它僅對「保留正反器邊界」的轉換（緩衝、深度最佳化、掃除、重新命名、分解、基底重映射、反閘收合）成立；任何新增/刪除/合併正反器的轉換會讓 flop-cut `cec` 誤判為不等價（`docs/OPEN_QUESTIONS.md` D6，詳見第 9 節決策記錄）。
+flop-cut 模型的健全性有明確邊界：它僅對「保留正反器邊界」的轉換（緩衝、深度最佳化、掃除、重新命名、分解、基底重映射、反閘收合）成立；任何新增/刪除/合併正反器的轉換會讓 flop-cut `cec` 誤判為不等價（`docs/OPEN_QUESTIONS.md` D6，詳見第 9 節決策記錄）。時序 BLIF 模型（用途 3）另有自己的語意邊界：**DFF RN/SN/CK 控制腳一律忽略**（與 `run_random_sim` 慣例一致，A21.1 宣告語意即如此），凡引用其證明結果時必須一併陳述（check_const 的回答字串已內建此聲明）。
 
 ---
 
@@ -313,6 +317,7 @@ BLIF（Berkeley Logic Interchange Format）是 Python/C++ 層與 ABC 之間的�
 
 ### 系統層
 
+- **時序模型忽略 DFF RN/SN 控制腳**（設計邊界，2026-07-12 明文化）：`run_random_sim`、flop-cut `write_blif` 與新增的 `write_seq_blif`（ABC scleanup/pdr 時序證明通道）三者共用同一時序語意——DFF 初始態 0、每拍 Q←D、RN/SN/CK 控制腳不進模型（A21.1 官方語意的專案詮釋）。若隱藏測資的預期語意把非同步 reset/set 納入可達性，時序恆定證明的結論可能與之出入；因此 check_const 的回答字串一律內建此邊界聲明，且時序判定僅用於回報、絕不回饋任何 transform/tie 路徑。
 - **分析答案覆蓋缺口**：`check_answers.py` 對分析類回答的正確性裁決中，統計上有 **47/277** 筆判定為 `UNVERIFIED`（既非 CORRECT 也非 WRONG，而是無法以既有 oracle 邏輯核實），代表獨立 oracle（`netlist_oracle.py`）尚未覆蓋所有分析問句類型，這部分答案的實際正確性目前無從獨立驗證。
 - **`gpt-4o-mini` 未驗證**：OpenAI API key 目前無 quota，任何 `gpt-4o-mini` 相關呼叫會以 429 失敗；40/40 的通過率僅在 `claude-haiku-4-5` 下實測驗證，`gpt-4o-mini` 路徑（provider 路由、訊息格式轉換等）僅經程式碼審查、未經真實流量驗證。
 - **Docker 未實測**：開發環境無 docker group 權限，無法直接執行 `docker build`/`docker run`；Dockerfile 多階段建置、`.dockerignore` 排除規則的正確性目前僅基於靜態檔案審查，未經實際容器建置與執行驗證。

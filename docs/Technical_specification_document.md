@@ -171,6 +171,7 @@
 | `EDAEngine.check_equivalence` | `(reference: Optional[str] = None) -> str` | 雙方各自匯出 flop-cut BLIF，交由 ABC `cec` 驗證，預設參照 `_original_filepath` |
 | `Graph::compute_topological_sort` | `() -> void`（C++） | Kahn 演算法，DFF 輸出邊視為切斷點，快取進 `topological_order` |
 | `Graph::write_blif` | `(const std::string& filename) -> void`（C++） | 正反器切割模型：DFF Q→`.inputs`，D→`.outputs`（`__D_<inst>`） |
+| `Graph::write_seq_blif` | `(filename, expose_csv, expose_only) -> std::string`（C++） | 時序 BLIF 匯出：每個 DFF 一行 `.latch <D> <Q> 0`，`.inputs` 僅實體 PI；`--expose` 網以 BUF 型 `.names` 別名（`__expose_<net>`，`!net` 反相為 `__expose_inv_<net>`）加入 `.outputs`；`expose_only` 時捨棄實體 PO（pdr property miter 用）。註冊 PO（PO 即 DFF Q）合法（就是 latch 輸出）；多 DFF 共驅同一 Q 網取解析順序最後者（與 `run_random_sim` last-writer-wins 一致，其餘計入 `dup_q_dropped`）；常數為專用 `.names` 節點（`__const0` 空 cover / `__const1` 單列 `1`）。**語意邊界：DFF RN/SN/CK 控制腳一律忽略**——與 `run_random_sim`/flop-cut 慣例相同，無新增健全性缺口。回傳 `SEQBLIF inputs=.. outputs=.. latches=.. dup_q_dropped=.. file=..` + 每個 expose 一行 `EXPOSE <item> po=<alias>` |
 
 ### 3.4 工具面規格（LLM 可呼叫之 42 個工具）
 
@@ -200,7 +201,7 @@
 | `flipflops_by_clock` | `clock` |
 | `max_pi_to_dff_depth` / `list_floating` / `highest_fanout_pi` / `list_nodes` / `list_pio` / `r2r_paths` / `deepest_cone_output` | — |
 | `signal_depends_on` | `target`, `source` |
-| `check_const` | `net`（功能恆定判定,A21.1:隨機時序模擬找非恆定見證 → ABC SAT 證恆 0/恆 1,DFF 初始態 0 定點;verdict 快取以 `_loaded_filepath` 為鍵） |
+| `check_const` | `net`（功能恆定判定,A21.1:隨機時序模擬找非恆定見證 → **ABC 時序通道**（scleanup 三值模擬證明 → pdr 歸納證明/真時序反例）→ ABC SAT 證恆 0/恆 1,DFF 初始態 0 定點;時序判定僅改變回報內容,絕不進 const_propagate 的 tie 路徑;verdict 快取以 `_loaded_filepath` 為鍵） |
 
 **TRANSFORM 類（17，改變 `_loaded_filepath` 指向；同集合即 `Planner._TRANSFORM_TOOLS`）**
 
@@ -259,7 +260,8 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 | 反閘收合（定點） | `graph.cpp:1174-1216` | O(V·L)，L 為反閘鏈長 | 收合 `NOT(NOT(x))` 背對背模式 |
 | 常數傳播 | `graph.cpp:940-1169` | O(V+E) 每輪，定點迭代 | 沿常數輸入化簡邏輯閘 |
 | 隨機時序模擬（稠密槽位編譯） | `graph.cpp` `run_random_sim` | 預編譯 O(V+E)；每拍 O(V+E) 純陣列運算（trials×cycles 拍） | DFF 初始態 0 的非恆定見證（A21.1）；供 `sim_consts`/`report_stuck_inputs`/`check_const` 共用。節點一次性稠密編號＋扁平化閘程式，取代逐拍 unordered_map（100k 節點 16×64 拍 ~90s → ~5s，2026-07-11） |
-| 功能恆定證明流程（sim 濾波 + ABC SAT + DFF-init-0 定點） | `engine.py` `_prove_const0_flops`/`_prove_nets_const`/`check_const` | 每輪 SAT ≤20s、單網總預算 110s、report/tie 批次預算 80s | A21.1 功能恆定:模擬淘汰可觸發的網，餘者以 cone BLIF + `strash; sat` 證 UNSAT；D 端恆 0 之 DFF 其 Q 綁 0 後再迭代至不動點 |
+| 功能恆定證明流程（sim 濾波 + ABC 時序通道 + ABC SAT + DFF-init-0 定點） | `engine.py` `_seq_const_channel`/`_prove_const0_flops`/`_prove_nets_const`/`check_const` | 每輪 SAT ≤20s、scleanup 管線 ≤30s、pdr `-T` ≤30s（夾至剩餘−40s 保留）、單網總預算 110s、report/tie 批次預算 80s | A21.1 功能恆定:模擬淘汰可觸發的網 → 時序通道（見下列）→ 餘者以 cone BLIF + `strash; sat` 證 UNSAT；D 端恆 0 之 DFF 其 Q 綁 0 後再迭代至不動點。逾時/UNDECIDED 一律不算證明 |
+| ABC 時序恆定通道（2026-07-12） | `engine.py` `_seq_const_channel`/`_abc_scleanup_const`/`_abc_pdr`；`graph.cpp` `write_seq_blif` | scleanup 實測 ~0.7s 全管線 @16050 latches（test39）；pdr `-T` 受控 | 單次 property-miter 匯出（net 或 `!net` 為唯一 PO）同時餵兩引擎：(a) `strash; scleanup; write_blif` 後 miter PO 化為字面常數 0 即證明（自全零初始態的三值模擬是健全的可達性過近似）；(b) scleanup 無果且預算足則 `pdr -T`——`Property proved.` 為歸納證明、`asserted in frame N` 為**真時序反例**（比 flop-cut SAT 更強的非恆定見證）、`UNDECIDED` 不證明任何事。**僅改變 check_const 回報,絕不進 tie/propagate 路徑**（綁定僅時序恆定的網會破壞等價評分用的 flop-cut cec 模型）。注意用真名 `scleanup`,別名 `scl` 需要 `-q` 不載入的 abc.rc |
 | BLIF 匯出（flop-cut） | `graph.cpp:436-508` | O(V+E) + O(2^k) XOR/XNOR（k 通常=2） | 產生供 ABC 使用的正反器切割組合邏輯 |
 | BLIF 匯入（真值表查表） | `graph.cpp:330-434` | O(2^nin) 每 `.names` 區塊 | 將 ABC 最佳化後的 BLIF 還原為 `Graph` 原生閘 |
 | 防幻覺三閘門 | `planner.py:269-304` | O(1) 判斷 | write/zero-tool/transform 三道 gate，修正上限 2 次 |
@@ -269,7 +271,7 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 ### 4.2 演算法詳述（六項最關鍵機制）
 
 **(1) BLIF 匯出：正反器切割模型（flop-cut，`write_blif`，`graph.cpp:436-508`）**
-把時序電路轉為 ABC 可驗證的純組合邏輯：每個 DFF 的 Q 輸出網路變成 BLIF 的 `.inputs`（代表「上一狀態」），每個 DFF 的 D 輸入映射到新的 `.outputs` 項 `__D_<inst>`（代表「下一狀態」）。若某 PO net 恰好也是某 DFF 的 Q net，該 PO 從 `.outputs` 省略（BLIF 不允許同一 net 既是 input 又是 output，且等價性已由對應 `__D_<inst>` 覆蓋）。同一 net 被多個 DFF 共同驅動時輸入端僅發一次（`emitted_in` 去重），但每個 flop 各自產生獨立的 `__D_<inst>` tap。此模型僅對「保留正反器邊界」的轉換（緩衝、深度最佳化、掃除、重新命名、分解、基底重映射、反閘收合）為健全（sound）；任何新增/刪除/合併正反器的轉換會使 flop-cut `cec` 誤判為不等價（見 `docs/OPEN_QUESTIONS.md` D6）。
+把時序電路轉為 ABC 可驗證的純組合邏輯：每個 DFF 的 Q 輸出網路變成 BLIF 的 `.inputs`（代表「上一狀態」），每個 DFF 的 D 輸入映射到新的 `.outputs` 項 `__D_<inst>`（代表「下一狀態」）。若某 PO net 恰好也是某 DFF 的 Q net，該 PO 從 `.outputs` 省略（BLIF 不允許同一 net 既是 input 又是 output，且等價性已由對應 `__D_<inst>` 覆蓋）。同一 net 被多個 DFF 共同驅動時輸入端僅發一次（`emitted_in` 去重），但每個 flop 各自產生獨立的 `__D_<inst>` tap。此模型僅對「保留正反器邊界」的轉換（緩衝、深度最佳化、掃除、重新命名、分解、基底重映射、反閘收合）為健全（sound）；任何新增/刪除/合併正反器的轉換會使 flop-cut `cec` 誤判為不等價（見 `docs/OPEN_QUESTIONS.md` D6）。2026-07-12 起另有姊妹匯出器 `write_seq_blif`（時序模型,DFF 保留為 `.latch <D> <Q> 0`,詳見 3.3 節）,專供 ABC 時序引擎（scleanup/pdr）作 check_const 的證明通道——兩個模型共用同一語意邊界:**DFF RN/SN/CK 控制腳一律忽略**（與 `run_random_sim` 慣例一致）。時序模型的判定僅用於回報,絕不回饋等價性評分所依賴的 flop-cut 路徑。
 
 **(2) 路徑枚舉 DFS 對比路徑計數 DP（`find_all_paths` vs `count_paths`）**
 兩者解決不同問題但常被混淆：`count_paths` 是標準 DAG 上的動態規劃——沿拓撲序做 `path_count[v] += path_count[u]`，時間複雜度 O(V+E)，與路徑實際數量無關，不會指數爆炸；2026-07-11 起計數改用 **64 位元飽和加法**（`long long`，上限 2^62——路徑數隨深度指數成長，`int` 在隱藏測資上可能溢位成未定義行為；飽和值仍誠實表達「天文數字」）。`find_all_paths` 是真正的遞迴枚舉（DFS with backtracking），2026-07-06 起帶**目標可達性剪枝**（枚舉前先自終點做一次反向 BFS 標記「能到達終點」的子圖，DFS 只在該子圖內下降——沒有剪枝時 DFS 會在到不了終點的死路子圖裡指數級遊走，test12 的實測案例即因此耗盡 150 秒逾時，剪枝後同一查詢 8 秒內完成且實際只有 8 條路徑）。2026-07-11 起（官方 Q&A A16/A21.3，P1-3）新增 `--paths_out <file>` **流式落檔模式**：每找到一條路徑立即寫檔（`Path N: a -> b -> ...` 一行一條，不進記憶體向量），檔案因此是**完整枚舉**——test14 實測 289,366 條全數落檔（行數與 DP 精確值相符，1.9 秒）；stdout 僅回精確總數與前 100 條預覽。流式模式的防護是**資源上限**（`STREAM_CAP_PATHS = 10^6` 條、`STREAM_CAP_BYTES = 512MB`，先到先停——無上限時病態配對可在 150 秒逾時前寫出數十 GB）：觸頂時 header 明示檔案 INCOMPLETE 並附 DP 精確總數，Python 層把該旗標傳進工具結果，agent 不會謊稱完整。無 `--paths_out` 的舊模式維持 **10000 條收集上限**（達上限時附註 DP 精確總數）。歷史對照：`r2r_paths` 從一開始就有 `MAX_PATHS_PER_PAIR=5`／`MAX_TOTAL_PATHS=200` 的生成階段上限，是本次修法的參照設計。
@@ -343,6 +345,7 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 - **`parser_error.log` 側寫**（現況維持）：所有 `log_error` 呼叫除寫 stderr 外，同時附加寫入執行目錄下的 `parser_error.log`（含時間戳）；此檔案持續累積、不自動清空，屬執行期產物而非版本控管內容。
 - **`get_node_info` 的 Fanout count 與列出的後繼閘數不符**（已修復，2026-07-07，官方 Q&A P1-4）：`Graph::get_node_info`（`graph.cpp`）原本印出 `n->outputs.size()` 作為 Fanout count——對閘節點而言 `outputs` 是指向其自身輸出網（net）節點的邊，通常恆為 1，即使該網實際扇出到多個消費閘（test18 曾印出 `Fanout count: 1` 但同時列出 2 個 `Driven Gates`）。現改為 `driven_gates.size()`（依網追蹤後得到的消費閘集合大小），與下方列出的閘數一致。同時把易誤導的欄位名稱 `Driving Gates` / `Driven Gates (Immediate Successors)` 改名為 `Input drivers (fanin)` / `Driven gates (immediate successors / direct fanout)`，並在 `tool_spec.py` 的 `count_fanin_gates`/`count_fanout_gates`/`get_node_info` 描述與 `planner.py` KEY RULES 中明確區分「direct fanout（get_node_info）」vs「transitive fanout cone（count_fanout_gates）」，修正 agent 把「number of gates driven by X」一律答成遞移錐大小的系統性錯誤。`check_answers.py` 的 `"Fanout Gates:\s*(-?\d+)"` 判讀 regex 對應 `count_fanout` action 的獨立輸出行，不受本次 `get_node_info` 欄位改名影響。
 - **`find_paths` 0 條結果被誤答為「存在路徑」**（已修復，2026-07-07，官方 Q&A P1-5）：`EDAEngine.find_paths`（`engine.py`）在 C++ 回傳 `"No paths found."` 時，現在會把結論前置為 `"ANSWER: NO — No paths found."` 再回傳給 LLM，讓「路徑是否存在」類問題的判定直接寫在工具輸出裡，避免小模型無視 0 條結果、自行捏造「是」的回答（test13/test16 曾各出現此錯誤）。`planner.py` KEY RULES 同步加入明文規則。
+- **時序 BLIF 匯出忽略 DFF RN/SN 控制腳**（設計邊界，2026-07-12 明文化）：`write_seq_blif` 的 `.latch` 模型（供 check_const 的 ABC scleanup/pdr 時序通道）與 `run_random_sim`、flop-cut `write_blif` 採同一慣例——DFF 的 RN/SN/CK 控制腳不進模型，時序語意為「初始態 0、每拍 Q←D」。這不是新增的健全性缺口（專案宣告的時序語意即如此,A21.1），但凡引用時序證明結果時必須連同此邊界一併陳述（check_const 的回答字串已內建此聲明）。同場修復:check_const 尾端的 flop-cut SAT 對（`can_be_1`/`can_be_0`）原本不受 110s 預算夾制,時序通道加入後可能推整體超時,現一律 `min(_SAT_TIMEOUT_S, 剩餘預算)`——被餓死的 SAT 回 None,回報為 INCONCLUSIVE,絕不當證明。
 - **`find_paths` 落檔內容不完整**（已修復，2026-07-11，官方 Q&A A16/A21.3，P1-3）：舊實作把 C++ 的 stdout 原文（僅含前 ~101 條預覽）寫進 `paths_*.log`，同時 C++ 收集階段另有 10000 條上限——「完整清單寫入檔案」的宣稱實際上不成立。現在 `EDAEngine.find_paths` 一律以 session 暫存檔呼叫 `list_paths --paths_out`，C++ **逐條流式寫檔**；超過 `_PATH_FILE_THRESHOLD = 50` 條時把完整檔案 `shutil.move` 到測資目錄並回傳 `saved_to_file` 摘要（含 `file_contents` 完整性標註），較小結果則回傳 inline 原文並丟棄暫存檔。同時修復 header 判讀 regex：舊 regex `Found\s+(\d+)\s+paths?:` 在 capped header（`Found 10000 paths (enumeration capped ...)：`）上不匹配，會退化成數預覽行數（~101）——現在優先讀 `exact total by DP: N`、再讀 `Found N paths`。C++ 資源上限觸頂時（10^6 條/512MB）摘要的 `file_contents` 明示 INCOMPLETE。
 
 ---

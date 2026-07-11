@@ -65,6 +65,7 @@ public:
     std::string deepest_cone_output();
     std::string r2r_paths();
     std::string write_cone_blifs(const std::string& nets_csv, const std::string& out_dir, const std::string& tie0_csv);
+    std::string write_seq_blif(const std::string& filename, const std::string& expose_csv, bool expose_only);
     std::string tie_nets_const(const std::string& assign_csv);
     std::string sim_consts(const std::string& nets_csv, int cycles, int trials, unsigned seed);
     std::string list_dffs(const std::string& scope_net);
