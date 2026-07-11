@@ -231,6 +231,11 @@
 入設計同目錄），回傳含 `notice`/`saved_to_file`/樣本欄位的 JSON 摘要；system
 prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 
+**`find_paths` 專用落檔**（先於通用攔截層）：路徑枚舉經 C++ `--paths_out`
+流式寫檔，超過 50 條時完整枚舉檔移至測資目錄（`paths_<start>_to_<end>[_avoid_X].log`，
+一行一條），工具結果為含 `total_paths_found`/`saved_to_file`/`file_contents`
+完整性標註/樣本的 JSON 摘要（見 §6.1 P1-3 條目）。
+
 ---
 
 ## 4. 演算法邏輯（Algorithm Design）
@@ -244,7 +249,7 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 | 層級化深度計算 | `graph.cpp:63-137` | O(V+E) | 逐節點層級（`calc_depth`/`analyze_depth` 基礎） |
 | 關鍵路徑貪婪回溯 | `graph.cpp:139-173` | O(V+E) + O(路徑長度×平均扇入) | 由層級值反向挑選最大前驅重建關鍵路徑 |
 | 路徑計數 DP | `graph.cpp:175-200` | O(V+E) | 沿拓撲序累加路徑數，不枚舉路徑本身 |
-| 路徑枚舉 DFS（目標可達性剪枝 + 上限） | `graph.cpp` `find_all_paths` | O(V+E) 反向 BFS + O(路徑數×路徑長)，收集上限 10000 條 | 枚舉 start→end 路徑；先以反向 BFS 標記可達目標的子圖再 DFS，超過上限時輸出附註 DP 精確總數；顯示截斷於 100 條 |
+| 路徑枚舉 DFS（目標可達性剪枝 + 流式落檔/上限） | `graph.cpp` `find_all_paths` | O(V+E) 反向 BFS + O(路徑數×路徑長)；`--paths_out` 流式模式資源上限 10^6 條/512MB，無旗標舊模式收集上限 10000 條 | 枚舉 start→end 路徑；先以反向 BFS 標記可達目標的子圖再 DFS。`--paths_out <file>` 時逐條流式寫檔（不進記憶體），檔案為完整枚舉（A16），stdout 僅印精確總數 + 前 100 條預覽；資源上限觸頂時 header 標註 INCOMPLETE 並附 DP 精確總數。無旗標時維持 10000 條收集上限 + DP 附註 |
 | 緩衝樹插入（平衡分批） | `graph.cpp:513-623` | O(扇出數)（樹狀分層近似 O(n log n)） | 限制扇出，含控制腳（pin_conn）扇出再加強 |
 | 基底重映射（布林恆等式 + 反閘共用） | `graph.cpp:1224-1306` | O(cone 大小) | 全域/錐狀邏輯轉換為 `nor_not`/`and_not`/`nand_not` 基底 |
 | XOR→4-NAND 分解 | `graph.cpp:682-746`（`decompose_in_cone`） | O(1) 每閘 | 點狀單一閘型別到目標基底的精確結構轉換 |
@@ -264,7 +269,7 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 把時序電路轉為 ABC 可驗證的純組合邏輯：每個 DFF 的 Q 輸出網路變成 BLIF 的 `.inputs`（代表「上一狀態」），每個 DFF 的 D 輸入映射到新的 `.outputs` 項 `__D_<inst>`（代表「下一狀態」）。若某 PO net 恰好也是某 DFF 的 Q net，該 PO 從 `.outputs` 省略（BLIF 不允許同一 net 既是 input 又是 output，且等價性已由對應 `__D_<inst>` 覆蓋）。同一 net 被多個 DFF 共同驅動時輸入端僅發一次（`emitted_in` 去重），但每個 flop 各自產生獨立的 `__D_<inst>` tap。此模型僅對「保留正反器邊界」的轉換（緩衝、深度最佳化、掃除、重新命名、分解、基底重映射、反閘收合）為健全（sound）；任何新增/刪除/合併正反器的轉換會使 flop-cut `cec` 誤判為不等價（見 `docs/OPEN_QUESTIONS.md` D6）。
 
 **(2) 路徑枚舉 DFS 對比路徑計數 DP（`find_all_paths` vs `count_paths`）**
-兩者解決不同問題但常被混淆：`count_paths` 是標準 DAG 上的動態規劃——沿拓撲序做 `path_count[v] += path_count[u]`，時間複雜度 O(V+E)，與路徑實際數量無關，不會指數爆炸。`find_all_paths` 是真正的遞迴枚舉（DFS with backtracking），2026-07-06 起帶兩層防護：**目標可達性剪枝**（枚舉前先自終點做一次反向 BFS 標記「能到達終點」的子圖，DFS 只在該子圖內下降——沒有剪枝時 DFS 會在到不了終點的死路子圖裡指數級遊走，test12 的實測案例即因此耗盡 150 秒逾時，剪枝後同一查詢 8 秒內完成且實際只有 8 條路徑）與**收集上限 10000 條**（達上限時輸出首行附註以 `count_paths` DP 算出的精確總數，供呼叫端取得真實數字）。顯示階段仍另有 100 條的截斷。歷史對照：`r2r_paths` 從一開始就有 `MAX_PATHS_PER_PAIR=5`／`MAX_TOTAL_PATHS=200` 的生成階段上限，是本次修法的參照設計。
+兩者解決不同問題但常被混淆：`count_paths` 是標準 DAG 上的動態規劃——沿拓撲序做 `path_count[v] += path_count[u]`，時間複雜度 O(V+E)，與路徑實際數量無關，不會指數爆炸；2026-07-11 起計數改用 **64 位元飽和加法**（`long long`，上限 2^62——路徑數隨深度指數成長，`int` 在隱藏測資上可能溢位成未定義行為；飽和值仍誠實表達「天文數字」）。`find_all_paths` 是真正的遞迴枚舉（DFS with backtracking），2026-07-06 起帶**目標可達性剪枝**（枚舉前先自終點做一次反向 BFS 標記「能到達終點」的子圖，DFS 只在該子圖內下降——沒有剪枝時 DFS 會在到不了終點的死路子圖裡指數級遊走，test12 的實測案例即因此耗盡 150 秒逾時，剪枝後同一查詢 8 秒內完成且實際只有 8 條路徑）。2026-07-11 起（官方 Q&A A16/A21.3，P1-3）新增 `--paths_out <file>` **流式落檔模式**：每找到一條路徑立即寫檔（`Path N: a -> b -> ...` 一行一條，不進記憶體向量），檔案因此是**完整枚舉**——test14 實測 289,366 條全數落檔（行數與 DP 精確值相符，1.9 秒）；stdout 僅回精確總數與前 100 條預覽。流式模式的防護是**資源上限**（`STREAM_CAP_PATHS = 10^6` 條、`STREAM_CAP_BYTES = 512MB`，先到先停——無上限時病態配對可在 150 秒逾時前寫出數十 GB）：觸頂時 header 明示檔案 INCOMPLETE 並附 DP 精確總數，Python 層把該旗標傳進工具結果，agent 不會謊稱完整。無 `--paths_out` 的舊模式維持 **10000 條收集上限**（達上限時附註 DP 精確總數）。歷史對照：`r2r_paths` 從一開始就有 `MAX_PATHS_PER_PAIR=5`／`MAX_TOTAL_PATHS=200` 的生成階段上限，是本次修法的參照設計。
 
 **(3) 基底重映射（`remap_cone_to_basis`，`graph.cpp:1224-1306`）**
 以布林恆等式將任意邏輯閘轉換為三種目標基底之一，並用 `inv_cache`（`unordered_map<Node*, Node*>`）快取每個訊號的反相結果以**共用反閘**、避免重複生成：
@@ -333,6 +338,7 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 - **`parser_error.log` 側寫**（現況維持）：所有 `log_error` 呼叫除寫 stderr 外，同時附加寫入執行目錄下的 `parser_error.log`（含時間戳）；此檔案持續累積、不自動清空，屬執行期產物而非版本控管內容。
 - **`get_node_info` 的 Fanout count 與列出的後繼閘數不符**（已修復，2026-07-07，官方 Q&A P1-4）：`Graph::get_node_info`（`graph.cpp`）原本印出 `n->outputs.size()` 作為 Fanout count——對閘節點而言 `outputs` 是指向其自身輸出網（net）節點的邊，通常恆為 1，即使該網實際扇出到多個消費閘（test18 曾印出 `Fanout count: 1` 但同時列出 2 個 `Driven Gates`）。現改為 `driven_gates.size()`（依網追蹤後得到的消費閘集合大小），與下方列出的閘數一致。同時把易誤導的欄位名稱 `Driving Gates` / `Driven Gates (Immediate Successors)` 改名為 `Input drivers (fanin)` / `Driven gates (immediate successors / direct fanout)`，並在 `tool_spec.py` 的 `count_fanin_gates`/`count_fanout_gates`/`get_node_info` 描述與 `planner.py` KEY RULES 中明確區分「direct fanout（get_node_info）」vs「transitive fanout cone（count_fanout_gates）」，修正 agent 把「number of gates driven by X」一律答成遞移錐大小的系統性錯誤。`check_answers.py` 的 `"Fanout Gates:\s*(-?\d+)"` 判讀 regex 對應 `count_fanout` action 的獨立輸出行，不受本次 `get_node_info` 欄位改名影響。
 - **`find_paths` 0 條結果被誤答為「存在路徑」**（已修復，2026-07-07，官方 Q&A P1-5）：`EDAEngine.find_paths`（`engine.py`）在 C++ 回傳 `"No paths found."` 時，現在會把結論前置為 `"ANSWER: NO — No paths found."` 再回傳給 LLM，讓「路徑是否存在」類問題的判定直接寫在工具輸出裡，避免小模型無視 0 條結果、自行捏造「是」的回答（test13/test16 曾各出現此錯誤）。`planner.py` KEY RULES 同步加入明文規則。
+- **`find_paths` 落檔內容不完整**（已修復，2026-07-11，官方 Q&A A16/A21.3，P1-3）：舊實作把 C++ 的 stdout 原文（僅含前 ~101 條預覽）寫進 `paths_*.log`，同時 C++ 收集階段另有 10000 條上限——「完整清單寫入檔案」的宣稱實際上不成立。現在 `EDAEngine.find_paths` 一律以 session 暫存檔呼叫 `list_paths --paths_out`，C++ **逐條流式寫檔**；超過 `_PATH_FILE_THRESHOLD = 50` 條時把完整檔案 `shutil.move` 到測資目錄並回傳 `saved_to_file` 摘要（含 `file_contents` 完整性標註），較小結果則回傳 inline 原文並丟棄暫存檔。同時修復 header 判讀 regex：舊 regex `Found\s+(\d+)\s+paths?:` 在 capped header（`Found 10000 paths (enumeration capped ...)：`）上不匹配，會退化成數預覽行數（~101）——現在優先讀 `exact total by DP: N`、再讀 `Found N paths`。C++ 資源上限觸頂時（10^6 條/512MB）摘要的 `file_contents` 明示 INCOMPLETE。
 
 ---
 

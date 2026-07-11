@@ -4,6 +4,12 @@
 #include <fstream>
 #include <cctype>
 
+// Streaming path-enumeration resource caps (see stream_paths_recursive):
+// whichever trips first stops the enumeration; the header then reports the
+// exact DP total and marks the file INCOMPLETE.
+static const long long STREAM_CAP_PATHS = 1000000;          // 1e6 paths
+static const long long STREAM_CAP_BYTES = 512LL << 20;      // 512 MB
+
 Graph::~Graph() {
     for (auto node : all_nodes) {
         delete node;
@@ -176,15 +182,19 @@ std::string Graph::get_critical_path(const std::string& start, const std::string
     return ss.str();
 }
 
-int Graph::count_paths(const std::string& start, const std::string& end, const std::string& avoid) {
+long long Graph::count_paths(const std::string& start, const std::string& end, const std::string& avoid) {
     if (nodes.find(start) == nodes.end() || nodes.find(end) == nodes.end()) return 0;
     Node* start_node = nodes[start];
     Node* end_node = nodes[end];
     Node* avoid_node = avoid.empty() ? nullptr : (nodes.count(avoid) ? nodes[avoid] : nullptr);
-    
+
     if (topological_order.empty()) compute_topological_sort();
 
-    std::unordered_map<Node*, int> path_count;
+    // Path counts grow exponentially with depth; 64-bit with a saturating add
+    // (signed overflow is UB) — a saturated result still means "astronomically
+    // many", which is the honest answer at that scale.
+    static const long long SAT = 4611686018427387904LL; // 2^62
+    std::unordered_map<Node*, long long> path_count;
     for (auto n : all_nodes) path_count[n] = 0;
     path_count[start_node] = 1;
 
@@ -197,13 +207,14 @@ int Graph::count_paths(const std::string& start, const std::string& end, const s
         for (auto v : u->outputs) {
             if (v->type == NodeType::GATE && v->gate_type == GateType::DFF) continue;
             if (v == avoid_node) continue;
-            path_count[v] += path_count[u];
+            if (path_count[v] > SAT - path_count[u]) path_count[v] = SAT;
+            else path_count[v] += path_count[u];
         }
     }
     return path_count[end_node];
 }
 
-std::string Graph::find_all_paths(const std::string& start, const std::string& end, const std::string& avoid) {
+std::string Graph::find_all_paths(const std::string& start, const std::string& end, const std::string& avoid, const std::string& paths_out) {
     if (nodes.find(start) == nodes.end() || nodes.find(end) == nodes.end()) return "Error: Start or end node not found.";
     Node* start_node = nodes[start];
     Node* end_node = nodes[end];
@@ -231,6 +242,34 @@ std::string Graph::find_all_paths(const std::string& start, const std::string& e
                 if (can_reach.insert(u).second) st.push_back(u);
             }
         }
+    }
+
+    // Streaming mode (--paths_out): every path is written to the file the
+    // moment it is found — no in-memory collection, so the 10000 cap does not
+    // apply and the file is a COMPLETE enumeration (A16). stdout carries the
+    // exact total plus a 100-path preview; the caller knows the file path it
+    // passed, so it is not echoed here.
+    if (!paths_out.empty()) {
+        std::ofstream out(paths_out);
+        if (!out) return "Error: cannot open paths_out file for writing: " + paths_out;
+        long long found = 0, bytes = 0;
+        std::stringstream preview;
+        stream_paths_recursive(start_node, end_node, avoid_node, current_path, can_reach, out, found, bytes, preview);
+        out.close();
+        if (found == 0) return "No paths found.";
+        std::stringstream ss;
+        ss << "Found " << found << " paths";
+        // Resource guard tripped: the file stops at the cap. Report the DP
+        // total so the caller still gets the exact count and can flag the
+        // file as incomplete instead of claiming a full enumeration.
+        if (found >= STREAM_CAP_PATHS || bytes >= STREAM_CAP_BYTES) {
+            long long exact = count_paths(start, end, avoid);
+            if (exact != found)
+                ss << " (enumeration capped for resource safety; the output file is INCOMPLETE; exact total by DP: " << exact << ")";
+        }
+        ss << ":\n" << preview.str();
+        if (found > 100) ss << "... (preview truncated; the full enumeration is in the output file)\n";
+        return ss.str();
     }
 
     find_all_paths_recursive(start_node, end_node, avoid_node, current_path, all_paths, can_reach);
@@ -1373,6 +1412,37 @@ void Graph::find_all_paths_recursive(Node* curr, Node* target, Node* avoid, std:
             // Only descend into the subgraph that can still reach the target.
             if (!can_reach.count(next)) continue;
             find_all_paths_recursive(next, target, avoid, path, all_paths, can_reach);
+        }
+    }
+    path.pop_back();
+}
+
+void Graph::stream_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, const std::unordered_set<Node*>& can_reach, std::ostream& out, long long& found, long long& bytes, std::stringstream& preview) {
+    if (curr == avoid) return;
+    // Resource guard: enumeration streams to disk, so the limits are time and
+    // disk, not memory. Without a cap a pathological pair can write tens of
+    // GB before the 150s action timeout fires (shared machine, NFS home).
+    if (found >= STREAM_CAP_PATHS || bytes >= STREAM_CAP_BYTES) return;
+    path.push_back(curr);
+    if (curr == target) {
+        ++found;
+        std::stringstream line;
+        line << "Path " << found << ": ";
+        for (size_t j = 0; j < path.size(); ++j) {
+            line << path[j]->name << (j == path.size() - 1 ? "" : " -> ");
+        }
+        // Stream to file immediately — no in-memory accumulation, so the
+        // enumeration file is complete (up to the resource cap) no matter
+        // how many paths exist.
+        out << line.str() << "\n";
+        bytes += (long long)line.str().size() + 1;
+        if (found <= 100) preview << line.str() << "\n";
+    } else {
+        for (auto next : curr->outputs) {
+            if (next->type == NodeType::GATE && next->gate_type == GateType::DFF) continue;
+            // Only descend into the subgraph that can still reach the target.
+            if (!can_reach.count(next)) continue;
+            stream_paths_recursive(next, target, avoid, path, can_reach, out, found, bytes, preview);
         }
     }
     path.pop_back();

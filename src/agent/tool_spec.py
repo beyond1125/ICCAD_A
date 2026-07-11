@@ -109,7 +109,10 @@ EDA_TOOLS: List[Dict[str, Any]] = [
             "name": "find_paths",
             "description": (
                 "Enumerate paths from start_node to end_node in the netlist, "
-                "optionally avoiding a specific intermediate node."
+                "optionally avoiding a specific intermediate node. When many "
+                "paths exist, the complete enumeration is written to a file "
+                "(reported as saved_to_file) and the result carries the exact "
+                "total plus sample paths."
             ),
             "parameters": {
                 "type": "object",

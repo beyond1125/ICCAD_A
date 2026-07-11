@@ -50,10 +50,10 @@ int main(int argc, char** argv) {
     } else if (action == "get_critical_path") {
         std::cout << g.get_critical_path(args["--start"], args["--end"]) << std::endl;
     } else if (action == "count_paths") {
-        int c = g.count_paths(args["--start"], args["--end"], args["--avoid"]);
+        long long c = g.count_paths(args["--start"], args["--end"], args["--avoid"]);
         std::cout << "Paths: " << c << std::endl;
     } else if (action == "list_paths") {
-        std::cout << g.find_all_paths(args["--start"], args["--end"], args["--avoid"]) << std::endl;
+        std::cout << g.find_all_paths(args["--start"], args["--end"], args["--avoid"], args["--paths_out"]) << std::endl;
     } else if (action == "count_fanin") {
         int c = g.count_fanin_gates(args["--node"]);
         std::cout << "Fanin Gates: " << c << std::endl;

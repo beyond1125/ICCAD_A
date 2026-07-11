@@ -1,8 +1,9 @@
 # 修復計畫:官方 Q&A(2026-07-03)衝擊項
 
-> 狀態:**待審**(2026-07-07 擬定,依據 docs/CONTEST_QA.md)。
-> 審核通過後逐項派 subagent 執行;每項自帶驗證步驟與文件同步要求
-> (.claude/rules/docs-sync.md)。執行前先跑 `--case 2` canary 建立對照。
+> 狀態:**執行中**(2026-07-07 擬定,依據 docs/CONTEST_QA.md)。
+> 已完成:P1-4 + P1-5(2026-07-07, a979281)、P0-2(2026-07-08, 831c97e)、
+> P0-1(2026-07-08, 4c6d765)、P1-3(2026-07-11)。
+> 待做:P1-8(最大項)、P2-9、P2-6、P2-7(可選),收尾全量 sweep + 四層驗證。
 
 ## P0-1 交付打包改道:廢 Docker、改 TSRI 直跑自包式(A5.1/A6.1)
 
@@ -39,7 +40,14 @@ testcase/<case_name>/」「ALWAYS save to the same testcase directory」。
 路徑」的合成 prompt(模仿 spec 的 design/netlist/ 例)驗證讀寫路徑正確。
 **工作量**:小改 + 全量回歸(~1hr sweep)。
 
-## P1-3 list_paths 完整枚舉流式落檔(A16)
+## P1-3 list_paths 完整枚舉流式落檔(A16)— ✅ 完成(2026-07-11)
+
+> 實作與計畫一致,另加:流式模式資源上限(10^6 條/512MB,觸頂時 header 標
+> INCOMPLETE + DP 精確總數 — 無上限時病態配對會在 150s timeout 前寫出數十
+> GB);`count_paths` DP 改 64 位元飽和加法;修復 Python header regex 在
+> capped 輸出上不匹配的既有 bug。驗證:test14 289,366 條完整落檔(行數 ==
+> DP 值,1.9s);test02/08/12/14 LLM 回歸 OK + 等價 PASS,path 類答案全
+> CORRECT。
 
 **問題**:A16 要求「完整清單寫檔 + 回應給路徑」。現行 `find_all_paths` 有
 10k 收集上限(防爆記憶體),超過的枚舉檔案不完整;test14 級別(289k 條)

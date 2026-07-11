@@ -214,18 +214,29 @@ class EDAEngine:
     ) -> str:
         """Return all paths between two nodes.
 
-        When the number of paths exceeds ``_PATH_FILE_THRESHOLD``, the full
-        path list is serialized to a log file in the testcase directory and a
-        compact JSON summary (with status, total count, file path, and a few
-        sample paths) is returned so the LLM can report the result without
-        being overwhelmed by hundreds of thousands of lines.
+        The C++ enumeration streams every path into a session temp file
+        (``--paths_out``), so the file is COMPLETE — not limited by the old
+        in-memory 10k collection cap (contest Q&A A16 requires full
+        enumerations on file). When the count exceeds
+        ``_PATH_FILE_THRESHOLD``, the streamed file is moved into the
+        testcase directory and a compact JSON summary (status, total count,
+        file path, sample paths) is returned so the LLM can report the
+        result without being overwhelmed by hundreds of thousands of lines;
+        smaller results are returned inline and the temp file is discarded.
         """
+        tmp_out = self._session_path("paths_query", "log")
         raw = self._run_action(
-            "list_paths", start=start_node, end=end_node, avoid=avoid_node or ""
+            "list_paths",
+            start=start_node,
+            end=end_node,
+            avoid=avoid_node or "",
+            paths_out=tmp_out,
         )
 
         # If the engine returned an error, pass it through unchanged.
         if raw.startswith("Error"):
+            if os.path.isfile(tmp_out):
+                os.remove(tmp_out)
             return raw
 
         # Embed the conclusion directly in the tool result: small eval models
@@ -235,16 +246,25 @@ class EDAEngine:
         # turns that copying tendency into a safeguard instead of a failure
         # mode (see docs/PLAN_QA_fixes.md P1-5).
         if raw.strip() == "No paths found.":
+            if os.path.isfile(tmp_out):
+                os.remove(tmp_out)  # empty file from streaming mode
             return "ANSWER: NO — " + raw
 
         # ── Parse the real total from the C++ header line ─────────────────
-        # The C++ parser emits a header like "Found 289366 paths:" followed
-        # by up to ~101 printed path lines.  The header number is the ground
-        # truth; the printed lines may be truncated.
-        header_match = re.search(r"Found\s+(\d+)\s+paths?:", raw)
-        total = int(header_match.group(1)) if header_match else 0
+        # Streaming mode emits "Found 289366 paths:" (exact count) followed
+        # by a preview of up to 100 path lines. If the C++ resource cap
+        # tripped, the header instead carries the exact DP total and marks
+        # the file INCOMPLETE — prefer that number and propagate the flag.
+        capped_match = re.search(r"exact total by DP:\s*(\d+)", raw)
+        header_match = re.search(r"Found\s+(\d+)\s+paths?\b", raw)
+        if capped_match:
+            total = int(capped_match.group(1))
+        elif header_match:
+            total = int(header_match.group(1))
+        else:
+            total = 0
 
-        # Collect the individual path lines (may be fewer than `total`).
+        # Collect the preview path lines (may be fewer than `total`).
         path_lines = [ln for ln in raw.splitlines() if " -> " in ln]
 
         # If no header was found, fall back to counting printed lines.
@@ -252,11 +272,15 @@ class EDAEngine:
             total = len(path_lines)
 
         if total <= self._PATH_FILE_THRESHOLD:
-            # Small result — return the raw output directly.
+            # Small result — the preview already contains every path;
+            # return it directly and discard the temp file.
+            if os.path.isfile(tmp_out):
+                os.remove(tmp_out)
             return raw
 
-        # ── large result: write to file and return summary ────────────────
+        # ── large result: keep the complete streamed file, return summary ──
         import json
+        import shutil
 
         # Derive the testcase directory from the loaded design path.
         save_dir = self._testcase_dir()
@@ -269,8 +293,9 @@ class EDAEngine:
         filename = filename.replace("[", "_").replace("]", "_")
         log_path = os.path.join(save_dir, filename) if save_dir else filename
 
-        with open(log_path, "w", encoding="utf-8") as f:
-            f.write(raw)
+        # The streamed file holds the full enumeration (one "Path N: ..."
+        # line per path) — move it into place instead of rewriting it.
+        shutil.move(tmp_out, log_path)
 
         # Build a compact summary for the LLM.
         sample = path_lines[:3]
@@ -278,6 +303,12 @@ class EDAEngine:
             "status": "success",
             "total_paths_found": total,
             "saved_to_file": log_path,
+            "file_contents": (
+                "INCOMPLETE enumeration (resource cap hit; total above is the "
+                "exact count, the file holds only the first paths found)"
+                if capped_match
+                else "complete enumeration, one 'Path N: ...' line per path"
+            ),
             "sample_paths": sample,
         }
         return json.dumps(summary, ensure_ascii=False, indent=2)

@@ -205,7 +205,7 @@ stdin/stdout 協定由 `IOManager`（`src/utils/io_manager.py`）獨佔實作，
 `tool_spec.py` 定義 41 個結構化工具供 LLM 呼叫，分為四大類：**IO 類**（`load_design`/`write_design`，2 個）、**ANALYSIS 類**（唯讀查詢，不改變 `_loaded_filepath`，21 個）、**TRANSFORM 類**（改變 `_loaded_filepath` 指向，17 個，與 `Planner._TRANSFORM_TOOLS` 集合一致）、**VERIFY 類**（`check_equivalence`，1 個）。完整的工具清單、各工具參數簽名與對應 engine 方法，見 TSD 第 3.4 節工具面規格；本文件不重複列出，僅強調介面設計上的兩個跨工具共用機制：
 
 - 41 個工具定義與 `Planner._dispatch` 字典**完全一一對應**（無缺漏、無多餘），dispatch 表建構於 `Planner.__init__`。
-- **大結果落地截斷機制**：任何工具的原始輸出經 `Planner._execute_tool` 後，都會通過 `_truncate_large_result` 過濾——超過 `_MAX_RESULT_CHARS = 12000` 字元（約 3000 token，對任何供應商皆安全）的結果，不會整份塞回 LLM 的 context，而是落地為 `<tool_name>_<arg_tag>.log` 檔案（存於已載入設計同目錄），並回傳含 `notice`/`saved_to_file`/樣本欄位的 JSON 摘要。system prompt 明確要求 LLM 必須在回覆中提及 `saved_to_file` 路徑，讓使用者知道完整結果的落地位置。
+- **大結果落地截斷機制**：任何工具的原始輸出經 `Planner._execute_tool` 後，都會通過 `_truncate_large_result` 過濾——超過 `_MAX_RESULT_CHARS = 12000` 字元（約 3000 token，對任何供應商皆安全）的結果，不會整份塞回 LLM 的 context，而是落地為 `<tool_name>_<arg_tag>.log` 檔案（存於已載入設計同目錄），並回傳含 `notice`/`saved_to_file`/樣本欄位的 JSON 摘要。system prompt 明確要求 LLM 必須在回覆中提及 `saved_to_file` 路徑，讓使用者知道完整結果的落地位置。`find_paths` 另有專用的**完整枚舉落檔**路徑（C++ `--paths_out` 流式寫檔，2026-07-11，A16 合規——通用攔截層落的是「截斷後原文」，此處落的是完整清單），細節見第 10 節與 TSD §4.2(2)/§6.1。
 
 ### 6.3 parser_cpp CLI 契約
 
@@ -302,7 +302,7 @@ BLIF（Berkeley Logic Interchange Format）是 Python/C++ 層與 ABC 之間的�
 以下六項為程式碼審查（2026-07-06）發現的缺陷，同日完成修復；保留於此作為設計記錄：
 
 - **BLIF 匯入 `nin>=3` 缺口**（已修復為大聲失敗）：原本超過兩輸入的 `.names` 區塊會落入 2-input 分支建出**錯誤邏輯**；現在 `flush` 在真值表展開前攔截並累計 `blif_unsupported`，`rebuild` 偵測到即回報 `Failure` 並以非零 exit code 中止。完整支援 3+ 輸入查表仍未實作——目前 ABC 腳本（`strash`/`resyn2`/`balance`）僅產生 2-input AIG，無實際需求;若未來變更 ABC 腳本，失敗會是顯性的而非靜默的。
-- **`find_all_paths` 無界枚舉**（已修復）：加入目標可達性剪枝（反向 BFS 標記可達終點的子圖）與 10000 條收集上限；達上限時輸出附註 `count_paths` DP 的精確總數。實測：test12 原本 150 秒逾時的查詢，剪枝後 8 秒內完成（實際僅 8 條路徑——原本的耗時全部來自死路子圖的指數遊走）。150 秒 per-action timeout 保留作為一般性保險。
+- **`find_all_paths` 無界枚舉**（已修復；2026-07-11 擴充流式落檔）：加入目標可達性剪枝（反向 BFS 標記可達終點的子圖）與 10000 條收集上限；達上限時輸出附註 `count_paths` DP 的精確總數。實測：test12 原本 150 秒逾時的查詢，剪枝後 8 秒內完成（實際僅 8 條路徑——原本的耗時全部來自死路子圖的指數遊走）。150 秒 per-action timeout 保留作為一般性保險。**2026-07-11（官方 Q&A A16/A21.3，P1-3）**：新增 `--paths_out <file>` 流式模式——逐條寫檔不進記憶體，檔案為完整枚舉（test14 的 289,366 條實測全數落檔，行數與 DP 精確值相符，1.9 秒）；此模式防護為資源上限 10^6 條/512MB（無上限時病態配對可在 150 秒逾時前寫出數十 GB），觸頂時 header 明示 INCOMPLETE 並附 DP 精確總數。`count_paths` 同時改為 64 位元飽和加法（`int` 對指數成長的路徑數在隱藏測資上可能溢位）。Python 端 `engine.find_paths` 一律走流式模式，>50 條時把完整檔移入測資目錄並回 `saved_to_file` 摘要。
 - **`stoi` 缺乏例外防護**（已修復於 CLI 層）：`main.cpp` 數值旗標改經 `int_flag()` 解析，非數字值 `log_error` 後乾淨退出。
 - **拓撲快取失效不一致**（已修復）：`add_edge` 與三個節點刪除函式（`sweep_dangling`、`collapse_inverters`、`merge_duplicate_gates`）現在都顯式清空 `topological_order`，覆蓋所有變更圖結構的路徑。
 - **`anon_N` 命名碰撞**（已修復）：匿名實例命名現在會跳過輸入網表已使用的名稱，不再靜默誤合併。

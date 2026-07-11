@@ -30,8 +30,8 @@ public:
     std::unordered_map<Node*, int> compute_levels(Node* start = nullptr);
     int calculate_depth(const std::string& start, const std::string& end);
     std::string get_critical_path(const std::string& start, const std::string& end);
-    int count_paths(const std::string& start, const std::string& end, const std::string& avoid = "");
-    std::string find_all_paths(const std::string& start, const std::string& end, const std::string& avoid = "");
+    long long count_paths(const std::string& start, const std::string& end, const std::string& avoid = "");
+    std::string find_all_paths(const std::string& start, const std::string& end, const std::string& avoid = "", const std::string& paths_out = "");
     int count_fanin_gates(const std::string& name);
     int count_fanout_gates(const std::string& name);
     std::string get_fanin_cone(const std::string& name);
@@ -67,6 +67,7 @@ public:
 
 private:
     void find_all_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, std::vector<std::vector<Node*>>& all_paths, const std::unordered_set<Node*>& can_reach);
+    void stream_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, const std::unordered_set<Node*>& can_reach, std::ostream& out, long long& found, long long& bytes, std::stringstream& preview);
     int count_fanin_gates_recursive(Node* curr, std::unordered_set<Node*>& visited);
     int count_fanout_gates_recursive(Node* curr, std::unordered_set<Node*>& visited);
     void get_cone_recursive(Node* curr, std::unordered_set<Node*>& visited, bool backward);
