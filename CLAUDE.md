@@ -41,8 +41,8 @@ in /tmp/grader_sim/. See the `debug-case` skill.
 6. Functional equivalence is sacred: any hard-requirement violation is
    zero credit for that testcase, no partial credit.
 7. Shared machine, no docker group (don't attempt docker build/run — ask an
-   admin), OpenAI key currently has no quota (4o-mini runs fail 429; use the
-   Anthropic key/config).
+   admin). Both provider keys work as of 2026-07-12; `config.yaml` selects
+   the active one (currently openai/gpt-4o-mini).
 8. Never work on `main`. Use feature/fix branches, merge via PR.
 
 ## Architecture
