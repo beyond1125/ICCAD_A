@@ -34,9 +34,11 @@ run still reports "OK") until `check_results.py` is run.
 | Request wall-clock | 270s | `planner._REQUEST_BUDGET_S` | spec limit is 300s/request; leaves margin to still emit `#END` |
 | ABC call (cec / reduce_depth) | 180s | the two `subprocess.run([abc_path, ...], timeout=180)` sites in `engine.py` | ABC restructuring/cec can run long on bigger designs |
 | Parser subprocess action | 150s | `engine._ACTION_TIMEOUT_S` | bounds e.g. exponential path enumeration (test12 needs this; the oracle in eval_harness.py answers instantly while the tool can time out) |
-| check_const wall clock | 110s | `engine._CONST_BUDGET_S` | one functional-constancy verdict (sim + SAT rounds + DFF fixed point) must leave request-budget room for the answer turn |
+| check_const wall clock | 110s | `engine._CONST_BUDGET_S` | one functional-constancy verdict (sim + ABC sequential channel + SAT rounds + DFF fixed point) must leave request-budget room for the answer turn |
 | functional report/tie batch | 80s | `engine._FUNC_BUDGET_S` | one `const_propagate semantics='functional'` scan/tie pass; SAT is skipped once exhausted (timeout proves nothing — only UNSAT counts as constant) |
-| single ABC SAT call | 20s | `engine._SAT_TIMEOUT_S` | clamped to the remaining batch budget so one slow instance cannot drag the pass past its deadline |
+| ABC pdr call | 30s `-T` (+15s subprocess grace) | `engine._PDR_TIMEOUT_S` | `-T` is clamped to `remaining - _PDR_RESERVE_S` (40s) so an UNDECIDED pdr never starves the comb-SAT fallback; UNDECIDED/timeout is never a proof |
+| ABC scleanup pipeline | 30s | `engine._SEQ_ABC_TIMEOUT_S` | read+strash+scleanup+write of the sequential BLIF (measured ~0.7s wall at 16050 latches); clamped to the remaining check_const budget |
+| single ABC SAT call | 20s | `engine._SAT_TIMEOUT_S` | clamped to the remaining batch/check_const budget so one slow instance cannot drag the pass past its deadline (check_const's final flop-cut pair included since the seq channel landed) |
 
 Each level must stay strictly under the one above it or a slow inner call
 silently eats the outer budget and the request never gets a chance to answer

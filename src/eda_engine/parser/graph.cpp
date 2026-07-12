@@ -1888,6 +1888,130 @@ std::string Graph::write_cone_blifs(const std::string& nets_csv, const std::stri
     return res.str();
 }
 
+// Sequential BLIF export (".latch <D> <Q> 0" per DFF) — the bridge that lets
+// Berkeley ABC's sequential engines (scleanup ternary simulation, pdr,
+// scorr) run on our netlists, which ABC cannot parse directly (named-pin dff
+// instances). Unlike write_blif (flop-cut), flip-flops stay in the model:
+// .inputs are the real PIs only and every DFF becomes a .latch with initial
+// value 0. Semantic boundary: DFF RN/SN/CK control pins are IGNORED — the
+// same convention as run_random_sim and the flop-cut model, so proofs over
+// this model share the project's declared sequential semantics (DFF initial
+// state 0, X ignored) and add no new soundness gap. Documented cases:
+//   - registered PO (a PO net that is a DFF Q) is legal here — it is simply
+//     a latch output listed in .outputs; no flop-cut tap needed.
+//   - multiple DFFs driving one Q net: the last one in parse order keeps
+//     the .latch (matching run_random_sim's last-writer-wins cycle-start
+//     ordering); earlier duplicates are dropped and counted in the result.
+//   - constants become dedicated .names nodes (__const0 empty cover,
+//     __const1 single '1' row), like write_blif.
+// --expose nets are added to .outputs through a BUF-style .names alias
+// ("__expose_<net>", or "__expose_inv_<net>" with an inverting cover for
+// "!net" items) — a deterministic PO name for the Python layer that cannot
+// clash with real ports. expose_only=true drops the real POs so a pdr
+// property miter has the exposed net as its sole output.
+std::string Graph::write_seq_blif(const std::string& filename, const std::string& expose_csv, bool expose_only) {
+    std::vector<Node*> pis, pos, dffs, comb;
+    for (Node* n : all_nodes) {
+        if (n->type == NodeType::PRIMARY_INPUT) pis.push_back(n);
+        else if (n->type == NodeType::PRIMARY_OUTPUT) pos.push_back(n);
+        else if (n->type == NodeType::GATE) {
+            if (n->gate_type == GateType::DFF) dffs.push_back(n);
+            else comb.push_back(n);
+        }
+    }
+    struct Expose { std::string net; bool inv; std::string po; };
+    std::vector<Expose> exposes;
+    for (const auto& item : split_csv(expose_csv)) {
+        bool inv = item[0] == '!';
+        std::string net = inv ? item.substr(1) : item;
+        if (net.empty()) return "Error: empty --expose entry.";
+        if (net != "1'b0" && net != "1'b1" && !nodes.count(net))
+            return "Error: expose net '" + net + "' not found.";
+        exposes.push_back({net, inv,
+                           std::string(inv ? "__expose_inv_" : "__expose_") + blif_sanitize(net)});
+    }
+    bool need_c0 = false, need_c1 = false;
+    auto sig = [&](const std::string& n) -> std::string {
+        if (n == "1'b0" || n == "0") { need_c0 = true; return "__const0"; }
+        if (n == "1'b1" || n == "1") { need_c1 = true; return "__const1"; }
+        return n;
+    };
+    // Gate covers stream to a buffer first: an unsupported gate type must
+    // fail loudly (write_cone_blifs convention) instead of leaving a
+    // truncated .names block in a half-written file.
+    std::stringstream body;
+    for (Node* g : comb) {
+        if (g->outputs.empty()) continue;
+        body << ".names";
+        for (Node* in : g->inputs) body << " " << sig(in->name);
+        body << " " << g->outputs[0]->name << "\n";
+        size_t k = g->inputs.size();
+        switch (g->gate_type) {
+            case GateType::BUF: body << "1 1\n"; break;
+            case GateType::NOT: body << "0 1\n"; break;
+            case GateType::AND: body << std::string(k, '1') << " 1\n"; break;
+            case GateType::NOR: body << std::string(k, '0') << " 1\n"; break;
+            case GateType::OR:  for (size_t j = 0; j < k; ++j) { std::string c(k, '-'); c[j] = '1'; body << c << " 1\n"; } break;
+            case GateType::NAND:for (size_t j = 0; j < k; ++j) { std::string c(k, '-'); c[j] = '0'; body << c << " 1\n"; } break;
+            case GateType::XOR: case GateType::XNOR: {
+                bool want_odd = (g->gate_type == GateType::XOR);
+                for (size_t m = 0; m < (1u << k); ++m) {
+                    int par = 0; std::string c(k, '0');
+                    for (size_t b = 0; b < k; ++b) if (m & (1u << b)) { c[b] = '1'; par ^= 1; }
+                    if ((par == 1) == want_odd) body << c << " 1\n";
+                }
+                break;
+            }
+            default:
+                return "Error: unsupported gate type in sequential BLIF export ("
+                       + g->name + ").";
+        }
+    }
+    // Multiple DFFs on one Q net: the last one in all_nodes order wins
+    // (run_random_sim loads DFF states in that order, so the last write is
+    // the value the rest of the netlist actually observes).
+    std::unordered_map<std::string, Node*> q_owner;
+    for (Node* d : dffs) if (!d->outputs.empty()) q_owner[d->outputs[0]->name] = d;
+    int latches = 0, dup_q = 0;
+    std::stringstream lat;
+    for (Node* d : dffs) {
+        if (d->outputs.empty()) continue;      // dangling Q drives nothing observable
+        const std::string& q = d->outputs[0]->name;
+        if (q_owner[q] != d) { ++dup_q; continue; }
+        std::string dn;
+        if (d->inputs.empty()) { need_c0 = true; dn = "__const0"; }
+        else dn = sig(d->inputs[0]->name);
+        lat << ".latch " << dn << " " << q << " 0\n";
+        ++latches;
+    }
+    for (const auto& e : exposes)
+        body << ".names " << sig(e.net) << " " << e.po << "\n"
+             << (e.inv ? "0 1" : "1 1") << "\n";
+
+    std::ofstream ofs(filename);
+    if (!ofs) return "Error: cannot open '" + filename + "' for writing.";
+    std::unordered_set<std::string> emitted_in;
+    int npi = 0, npo = 0;
+    ofs << ".model top_seq\n.inputs";
+    for (Node* p : pis) if (emitted_in.insert(p->name).second) { ofs << " " << p->name; ++npi; }
+    ofs << "\n.outputs";
+    if (!expose_only)
+        for (Node* p : pos) { ofs << " " << p->name; ++npo; }
+    for (const auto& e : exposes) { ofs << " " << e.po; ++npo; }
+    ofs << "\n" << lat.str() << body.str();
+    if (need_c0) ofs << ".names __const0\n";
+    if (need_c1) ofs << ".names __const1\n1\n";
+    ofs << ".end\n";
+    if (!ofs.good()) return "Error: write failed for '" + filename + "'.";
+
+    std::stringstream res;
+    res << "SEQBLIF inputs=" << npi << " outputs=" << npo << " latches=" << latches
+        << " dup_q_dropped=" << dup_q << " file=" << filename << "\n";
+    for (const auto& e : exposes)
+        res << "EXPOSE " << (e.inv ? "!" : "") << e.net << " po=" << e.po << "\n";
+    return res.str();
+}
+
 // Random sequential simulation, DFF initial state = 0 (official ruling
 // A21.1), X ignored (every PI gets a random 0/1 each cycle). Fills `counts`
 // with (times seen 0, times seen 1) per net node. Simulation is a SOUND

@@ -874,6 +874,12 @@ class EDAEngine:
     _CONST_MAX_DFFS = 256        # fixpoint scope cap (skipping stays sound)
     _CONST_FIXPOINT_ROUNDS = 8
     _CONST_BUDGET_S = 110        # overall wall clock per check_const call
+    # ── ABC sequential channel (seq BLIF bridge) ─────────────────────────
+    _SEQ_ABC_TIMEOUT_S = 30      # one scleanup pipeline (read+strash+scleanup+write;
+                                 # measured ~0.7s wall at 16050 latches, test39)
+    _PDR_TIMEOUT_S = 30          # pdr -T bound; subprocess gets +15s grace for read/strash
+    _PDR_RESERVE_S = 40          # check_const budget kept for the comb-SAT fallback,
+                                 # so an UNDECIDED pdr never starves the exact path
 
     def _abc_sat(self, blif_path: str, timeout: Optional[float] = None) -> Optional[bool]:
         """Can output `o` of this single-output BLIF be 1?
@@ -898,6 +904,183 @@ class EDAEngine:
         if "SATISFIABLE" in out:
             return True
         return None
+
+    # ── ABC sequential proof channel (seq BLIF bridge) ────────────────────
+    # write_seq_blif exports the design with real .latch lines (initial value
+    # 0) so ABC's sequential engines can run on it. Semantic boundary: the
+    # exporter IGNORES DFF RN/SN/CK control pins — identical to the
+    # run_random_sim / flop-cut convention, so these proofs share the
+    # project's declared sequential semantics and add no new soundness gap.
+    # REPORT-ONLY: sequential verdicts feed check_const's answer text and
+    # nothing else — never const_propagate's tie/propagate path, because
+    # tying a net that is only sequentially constant breaks the flop-cut cec
+    # model used for all equivalence grading.
+
+    def _export_seq_blif(self, exposes: List[str], out_path: str,
+                         expose_only: bool = False):
+        """Export the loaded design as a sequential BLIF (.latch per DFF).
+
+        `exposes` items are net names, optionally '!'-prefixed for the
+        complement; each becomes an aliased PO. Returns ({item: PO name},
+        latch count) or None on failure.
+        """
+        kwargs: Dict[str, Any] = {"out": out_path, "expose": ",".join(exposes)}
+        if expose_only:
+            kwargs["expose_only"] = 1
+        raw = self._run_action("write_seq_blif", **kwargs)
+        m = re.search(r"^SEQBLIF .*latches=(\d+)", raw, re.M)
+        if not m or not os.path.isfile(out_path):
+            return None
+        pos = {mm.group(1): mm.group(2)
+               for mm in re.finditer(r"^EXPOSE (\S+) po=(\S+)", raw, re.M)}
+        return pos, int(m.group(1))
+
+    @staticmethod
+    def _parse_blif_const_po(path: str, po: str) -> Optional[int]:
+        """Is `po` a literal constant node in this BLIF? Returns 0/1/None.
+
+        Only a `.names <po>` block with no fanins counts: an empty cover or a
+        lone '0' row is constant 0, a lone '1' row is constant 1. Anything
+        else (including a buffer alias from another net) proves nothing.
+        """
+        try:
+            with open(path, "r") as fh:
+                lines = fh.read().replace("\\\n", " ").splitlines()
+        except OSError:
+            return None
+        for i, line in enumerate(lines):
+            toks = line.split()
+            if not toks or toks[0] != ".names" or len(toks) < 2 or toks[-1] != po:
+                continue
+            if len(toks) > 2:
+                return None  # has fanins -> not a literal constant
+            rows = []
+            for nxt in lines[i + 1:]:
+                s = nxt.split()
+                if s and s[0].startswith("."):
+                    break
+                if s:
+                    rows.append("".join(s))
+            if not rows or rows == ["0"]:
+                return 0
+            if rows == ["1"]:
+                return 1
+            return None
+        return None
+
+    def _abc_scleanup_const(self, blif_path: str, po: str,
+                            timeout: float) -> Optional[int]:
+        """Sequential stuck-at check via ABC scleanup.
+
+        Ternary simulation from the all-zero initial state is a sound
+        reachability overapproximation, so a constant verdict here is a
+        PROOF. Returns 0/1 when the exposed PO comes back as a literal
+        constant, else None. NOTE: 'scleanup' is the real command name — the
+        'scl' alias needs abc.rc, which -q does not load.
+        """
+        out_blif = self._session_path("scl", "blif")
+        try:
+            r = subprocess.run(
+                [self._abc_path, "-q",
+                 f"read_blif {blif_path}; strash; scleanup; write_blif {out_blif}"],
+                capture_output=True, text=True, timeout=timeout)
+        except Exception:  # noqa: BLE001 - timeout or spawn failure
+            return None
+        if r.returncode != 0 or not os.path.isfile(out_blif):
+            return None
+        return self._parse_blif_const_po(out_blif, po)
+
+    def _abc_pdr(self, blif_path: str, t_limit: float):
+        """Run ABC pdr on a single-PO sequential BLIF (property: PO always 0).
+
+        Returns ('proved', None) on `Property proved.`, ('cex', frame) on
+        `Output 0 of miter ... was asserted in frame N.` (a REAL sequential
+        counterexample under init-0 semantics), and None on
+        `Property UNDECIDED.` / timeout / ABC unavailable — which proves
+        nothing and must never be reported as one.
+        """
+        try:
+            r = subprocess.run(
+                [self._abc_path, "-q",
+                 f"read_blif {blif_path}; strash; pdr -T {int(t_limit)}"],
+                capture_output=True, text=True, timeout=t_limit + 15)
+        except Exception:  # noqa: BLE001 - timeout or spawn failure
+            return None
+        out = r.stdout + r.stderr
+        if "Property proved" in out:
+            return ("proved", None)
+        m = re.search(r"was asserted in frame (\d+)", out)
+        if m:
+            return ("cex", int(m.group(1)))
+        return None
+
+    def _seq_const_channel(self, net: str, observed: str,
+                           deadline: float) -> Optional[str]:
+        """ABC sequential-constant channel: scleanup first, then pdr.
+
+        Called once random simulation has failed to produce a non-constancy
+        witness (`observed` is the only value ever seen). Returns a final
+        check_const answer string on a sequential PROOF or a real sequential
+        counterexample, else None (callers fall through to the hand-rolled
+        DFF-init-0 fixpoint + flop-cut SAT).
+        """
+        if not os.path.isfile(self._abc_path):
+            return None
+        if deadline - time.monotonic() < 15:
+            return None
+        # ONE property-miter export serves both engines (a full-design export
+        # costs a whole netlist re-parse — ~12s at test39 scale): the net
+        # itself (observed 0) or its complement (observed 1) becomes the SOLE
+        # PO, turning "net is always <observed>" into "PO is always 0" for
+        # the scleanup parse and pdr alike.
+        item = net if observed == "0" else "!" + net
+        miter_blif = self._session_path("seq", "blif")
+        exp = self._export_seq_blif([item], miter_blif, expose_only=True)
+        if exp is None:
+            return None
+        po_map, latches = exp
+        po = po_map.get(item)
+        remaining = deadline - time.monotonic()
+        if po and remaining > 2:
+            v = self._abc_scleanup_const(
+                miter_blif, po, min(self._SEQ_ABC_TIMEOUT_S, remaining))
+            if v == 0:
+                return (
+                    f"ANSWER: YES, CONSTANT {observed} — net {net} is ALWAYS "
+                    f"{observed}: ABC scleanup reduced it to a literal constant "
+                    f"over the sequential model ({latches} latch(es), DFF "
+                    f"initial state 0). Ternary simulation from the all-zero "
+                    f"initial state is a sound reachability overapproximation, "
+                    f"so this is a proof. (DFF RN/SN control pins ignored per "
+                    f"the project's sequential convention.)"
+                )
+            # v == 1 would contradict the simulation-reached value (a broken
+            # model) — never report it; fall through silently.
+        if latches == 0:
+            return None  # purely combinational: the exact flop-cut SAT decides
+        t = min(self._PDR_TIMEOUT_S, deadline - time.monotonic() - self._PDR_RESERVE_S)
+        if t < 5:
+            return None
+        verdict = self._abc_pdr(miter_blif, t)
+        if verdict is None:
+            return None
+        kind, frame = verdict
+        if kind == "proved":
+            return (
+                f"ANSWER: YES, CONSTANT {observed} — net {net} is ALWAYS "
+                f"{observed}: ABC pdr proved the sequential property 'net {net} "
+                f"is {observed} in every reachable state' by induction "
+                f"({latches} latch(es), DFF initial state 0; RN/SN control pins "
+                f"ignored per the project's sequential convention)."
+            )
+        other = "1" if observed == "0" else "0"
+        return (
+            f"ANSWER: NOT CONSTANT — ABC pdr found a real sequential "
+            f"counterexample: starting from the all-zero DFF initial state, "
+            f"net {net} reaches value {other} in frame {frame}, while random "
+            f"simulation already observed value {observed}. It is neither "
+            f"always 0 nor always 1."
+        )
 
     @staticmethod
     def _parse_sim_counts(raw: str) -> Dict[str, tuple]:
@@ -1169,6 +1352,17 @@ class EDAEngine:
             )
             cache[net] = res
             return res
+        observed = "1" if s1 > 0 else "0"
+
+        # ABC sequential channel first: stronger (true reachability semantics,
+        # not just the DFF-init-0 fixpoint approximation) and cheaper
+        # (scleanup is sub-second even at 16050 latches). Verdicts here only
+        # change what check_const REPORTS — they never feed const_propagate's
+        # tie path (see _seq_const_channel docstring).
+        seq_res = self._seq_const_channel(net, observed, deadline)
+        if seq_res is not None:
+            cache[net] = seq_res
+            return seq_res
 
         proven0 = self._prove_const0_flops(net, deadline)
         cone_dir = tempfile.mkdtemp(prefix="cones_", dir=self._session_dir)
@@ -1180,13 +1374,18 @@ class EDAEngine:
         if not m:
             return f"Error: cone extraction failed for {net}: {raw[:200]}"
         cone_gates, f_pos, f_inv = int(m.group(1)), m.group(2), m.group(3)
-        can_be_1 = self._abc_sat(f_pos)
-        can_be_0 = self._abc_sat(f_inv)
+        # Clamp both proofs to the remaining check_const budget: with the
+        # sequential channel ahead of us, an unclamped 20s+20s tail could
+        # push the whole call past _CONST_BUDGET_S. A starved SAT returns
+        # None, which is reported as INCONCLUSIVE — never as a proof.
+        rem = max(1.0, deadline - time.monotonic())
+        can_be_1 = self._abc_sat(f_pos, timeout=min(self._SAT_TIMEOUT_S, rem))
+        rem = max(1.0, deadline - time.monotonic())
+        can_be_0 = self._abc_sat(f_inv, timeout=min(self._SAT_TIMEOUT_S, rem))
         tie_note = (
             f" ({len(proven0)} flop(s) first proven stuck-at-0 by the DFF-init-0 "
             f"fixed point and tied to 0.)" if proven0 else ""
         )
-        observed = "1" if s1 > 0 else "0"
         if can_be_1 is False and can_be_0 is not False:
             res = (
                 f"ANSWER: YES, CONSTANT 0 — net {net} is ALWAYS 0: SAT proves no "

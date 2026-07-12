@@ -378,10 +378,10 @@ EDA_TOOLS: List[Dict[str, Any]] = [
                 "Determine whether a net/output is FUNCTIONALLY constant — "
                 "always 0 or always 1 for every possible input, with "
                 "flip-flops starting at 0. Uses random sequential simulation "
-                "plus an ABC SAT proof. Call this for 'is output X always "
-                "0?', 'is X constant?', 'can X ever become 1?'. Copy the "
-                "ANSWER verdict from the result; do not guess from cone size "
-                "or structure."
+                "plus ABC sequential (scleanup/pdr) and SAT proofs. Call this "
+                "for 'is output X always 0?', 'is X constant?', 'can X ever "
+                "become 1?'. Copy the ANSWER verdict from the result; do not "
+                "guess from cone size or structure."
             ),
             "parameters": {
                 "type": "object",

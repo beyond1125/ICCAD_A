@@ -56,6 +56,13 @@ int main(int argc, char** argv) {
         std::cout << g.find_all_paths(args["--start"], args["--end"], args["--avoid"], args["--paths_out"]) << std::endl;
     } else if (action == "write_cone_blifs") {
         std::cout << g.write_cone_blifs(args["--nets"], args["--out_dir"], args["--tie0"]) << std::endl;
+    } else if (action == "write_seq_blif") {
+        if (!args.count("--out")) {
+            log_error("Error: --out required for write_seq_blif");
+            return 1;
+        }
+        std::cout << g.write_seq_blif(args["--out"], args["--expose"],
+                                      args["--expose_only"] == "1") << std::endl;
     } else if (action == "sim_consts") {
         std::cout << g.sim_consts(args["--nets"], int_flag(args, "--cycles", 64),
                                   int_flag(args, "--trials", 16),
