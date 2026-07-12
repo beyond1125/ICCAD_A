@@ -139,11 +139,14 @@ EDA_TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "count_fanin_gates",
             "description": (
-                "Count the total number of gate instances in the TRANSITIVE fanin cone: "
-                "every gate that drives this node directly OR indirectly (the whole "
-                "upstream logic cone). This is NOT the count of immediate/direct "
-                "driving gates. For 'how many gates directly drive X' use get_node_info "
-                "instead and read its direct fanin (Driving Gates) list."
+                "Count the total number of gate instances in the COMBINATIONAL "
+                "transitive fanin cone: every gate that drives this node directly OR "
+                "indirectly, stopping at sequential boundaries (a DFF Q output acts "
+                "as a primary input: the boundary DFF is counted, its D-side logic "
+                "is not). The cone of a register output is therefore just the flop "
+                "itself. This is NOT the count of immediate/direct driving gates. "
+                "For 'how many gates directly drive X' use get_node_info instead "
+                "and read its direct fanin (Driving Gates) list."
             ),
             "parameters": {
                 "type": "object",
@@ -162,10 +165,11 @@ EDA_TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "count_fanout_gates",
             "description": (
-                "Count the total number of gate instances in the TRANSITIVE fanout cone: "
-                "every gate reachable downstream from this node, directly or indirectly "
-                "(the whole downstream logic cone, potentially far larger than the "
-                "node's direct loads). This is NOT the direct fanout / number of gates "
+                "Count the total number of gate instances in the COMBINATIONAL "
+                "transitive fanout cone: every gate reachable downstream from this "
+                "node, directly or indirectly, stopping at sequential boundaries (a "
+                "consuming DFF is counted as the cone boundary; nothing beyond its Q "
+                "output is). This is NOT the direct fanout / number of gates "
                 "immediately driven by this node. For 'how many gates does X directly "
                 "drive' / 'fanout of X' (direct loads only) use get_node_info instead "
                 "and read its direct fanout count / Driven Gates list — only use this "
@@ -188,8 +192,9 @@ EDA_TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_fanin_cone",
             "description": (
-                "Retrieve the complete list of nodes (signals and gates) in the "
-                "transitive fanin cone of a specific node."
+                "Retrieve the complete list of gates in the COMBINATIONAL fanin cone "
+                "of a specific node. Sequential boundary: a DFF Q output acts as a "
+                "primary input — the boundary DFF is listed, its D-side logic is not."
             ),
             "parameters": {
                 "type": "object",
@@ -208,8 +213,9 @@ EDA_TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_fanout_cone",
             "description": (
-                "Retrieve the complete list of nodes (signals and gates) in the "
-                "transitive fanout cone of a specific node."
+                "Retrieve the complete list of gates in the COMBINATIONAL fanout cone "
+                "of a specific node. Sequential boundary: a consuming DFF is listed "
+                "as the boundary; nothing beyond its Q output is traversed."
             ),
             "parameters": {
                 "type": "object",
@@ -228,7 +234,9 @@ EDA_TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "count_gates_in_cone",
             "description": (
-                "Count gates by type within the fanin or fanout cone of a specified node. "
+                "Count gates by type within the COMBINATIONAL fanin or fanout cone of "
+                "a specified node (sequential boundary: DFFs are included as cone "
+                "boundaries but never traversed — DFF Q acts as a primary input). "
                 "Returns per-type breakdown (AND, OR, NOT, NAND, NOR, XOR, XNOR, BUF, DFF) "
                 "and total count."
             ),
@@ -582,7 +590,9 @@ EDA_TOOLS: List[Dict[str, Any]] = [
                 "functionality. Replaces e.g. 2-input OR gates with "
                 "NAND and NOT gates. Call this for requests like 'replace all 2-input "
                 "OR gates in the cone of n11[0] with equivalent logic built only from "
-                "NAND and NOT gates'."
+                "NAND and NOT gates'. Transform cones walk THROUGH flip-flops (the "
+                "whole upstream logic that computes the node), unlike the "
+                "combinational analysis cones."
             ),
             "parameters": {
                 "type": "object",
@@ -660,7 +670,9 @@ EDA_TOOLS: List[Dict[str, Any]] = [
             "description": (
                 "Convert every gate in the fanin cone of a node to use only a target "
                 "gate basis (e.g. NOR and NOT), preserving functionality. Call this for "
-                "'convert the logic cone of n10 to use only NOR and NOT gates'."
+                "'convert the logic cone of n10 to use only NOR and NOT gates'. "
+                "Transform cones walk THROUGH flip-flops (the whole upstream logic "
+                "that computes the node), unlike the combinational analysis cones."
             ),
             "parameters": {
                 "type": "object",

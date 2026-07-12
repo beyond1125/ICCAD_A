@@ -2,8 +2,9 @@
 
 > 狀態:**執行中**(2026-07-07 擬定,依據 docs/CONTEST_QA.md)。
 > 已完成:P1-4 + P1-5(2026-07-07, a979281)、P0-2(2026-07-08, 831c97e)、
-> P0-1(2026-07-08, 4c6d765)、P1-3(2026-07-11)、P1-8(2026-07-11)。
-> 待做:P2-9、P2-6、P2-7(可選),收尾全量 sweep + 四層驗證。
+> P0-1(2026-07-08, 4c6d765)、P1-3(2026-07-11)、P1-8(2026-07-11)、
+> P2-9(2026-07-12)。
+> 待做:P2-6、P2-7(可選),收尾全量 sweep + 四層驗證。
 
 ## P0-1 交付打包改道:廢 Docker、改 TSRI 直跑自包式(A5.1/A6.1)
 
@@ -124,11 +125,24 @@ test32/36/38/39/40 的 const 報告題重跑,answer report 不退步;全部轉�
 cec 等價維持。
 **工作量**:大(本計畫最大項;ABC SAT 批次成本需實測)。
 
-## P2-9 分析 cone 語意對齊 + 單執行緒不變量(A21.2/A21.5)
+## P2-9 分析 cone 語意對齊 + 單執行緒不變量(A21.2/A21.5)— ✅ 完成(2026-07-12)
 
-**問題**:A21.2 裁決分析類 cone/深度僅組合邏輯(DFF.Q = PI)。oracle 預設
-已正確;引擎的 cone 分析工具(get_fanin_cone/count_fanin_gates/
-count_gates_in_cone)穿越 DFF(D4 的 transform 慣例外溢到分析)。
+> 落地紀錄:五個分析 action(`count_fanin`/`count_fanout`/`get_fanin_cone`/
+> `get_fanout_cone`/`count_gates_in_cone`)加 `--stop_at_dff`(預設 1)——
+> 邊界 DFF 計入 cone 但不穿越(fanin 不進 D/CK/RN/SN,不再爬時鐘/重置樹;
+> fanout 不出 Q),輸出字串/JSON 標明語意;transform 側 `fanin_cone_gates`
+> 依 D4 維持穿越。A21.5 單執行緒不變量已寫入 agent-runtime.md。
+> **驗證**:差分 11 個時序案 × 每案 40 網(含全部 dup-Q 熱點)× 兩方向 ×
+> 兩語意 = 1760 組,tool vs oracle 全數一致——初跑 39 筆 mismatch 全數歸因
+> oracle 的單驅動映射漏掉 dup-Q 第二顆 DFF(test38 legacy Δ6、test40 雙語意),
+> 修 oracle `drivers` 多值映射後歸零(C++ 每筆都是對的)。LLM 回歸
+> (gpt-4o-mini)test31/32/37/26/33 全 OK、check_results 五案 PASS、
+> check_answers 零 WRONG;test37「cone of n8」實答 {DFF:1} 與 oracle 一致
+> (舊語意 103)。eval_harness 五案 PASS+EQUIV;全量 check_results 40/40。
+> **連帶修復**:check_answers 的 Fanin/Fanout regex 容忍語意註記、cone 尺寸
+> 仲裁兼查舊語意(舊 log 分 DIVERGENT 不冤枉)、pio_count 兼認 bit 級計數
+> (test32 t5 誤判 WRONG→DIVERGENT);eval_harness 的 test38「path disagree」
+> 假訊號排除(字面 PI/PO 誤抽 + Error 誤讀為 True)。
 **方案**:C++ cone 分析加 `--stop_at_dff`(預設開啟於分析類 action);
 transform 用的 `fanin_cone_gates` 維持穿越(等價性安全,D4 理由仍成立)。
 tool_spec 描述同步說明語意。OPEN_QUESTIONS D4/O1/O6 加官方裁決註記。

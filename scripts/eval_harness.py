@@ -165,6 +165,14 @@ _PATH_RE = re.compile(
 _AVOID_RE = re.compile(r"(?:avoid(?:ing)?|not traverse|without)\s+(?:node\s+)?(\w+(?:\[\d+\])?)", re.I)
 
 
+# Category words that _PATH_RE can capture from meta-questions like
+# "Find all paths of length 0 (direct wire connections from PI to PO)"
+# (test38) — those are node classes, not node names; there is no concrete
+# pair to differentially check.
+_GENERIC_ENDPOINTS = {"pi", "po", "pis", "pos", "input", "inputs",
+                      "output", "outputs", "register", "registers"}
+
+
 def path_queries(prompt: Path):
     """Yield (start, end, avoid) for path-existence prompt lines."""
     for line in prompt.read_text().splitlines():
@@ -176,6 +184,8 @@ def path_queries(prompt: Path):
         s = m.group(1) or m.group(3)
         e = m.group(2) or m.group(4)
         if not s or not e:
+            continue
+        if s.lower() in _GENERIC_ENDPOINTS or e.lower() in _GENERIC_ENDPOINTS:
             continue
         av = _AVOID_RE.search(line)
         yield s, e, (av.group(1) if av else "")
@@ -213,6 +223,11 @@ def eval_case(n: int, skip_paths: bool) -> dict:
             if not ok:
                 entry["tool"] = "TIMEOUT"
                 res["notes"].append(f"find_paths TIMEOUT on {entry['q']} (oracle={exp} in <1s)")
+            elif o.startswith("Error:"):
+                # bad node names etc. — a failed query, not an existence claim
+                # (used to read "Error: ... not found." as tool=True, test38)
+                entry["tool"] = "ERROR"
+                res["notes"].append(f"find_paths ERROR on {entry['q']}: {o.splitlines()[0]}")
             else:
                 # tool returns a list; "exists" = at least one path line present
                 got = ("no path" not in o.lower()) and bool(re.search(r"\bn?\w+\[?\d*\]?\b", o))

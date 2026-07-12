@@ -294,44 +294,52 @@ std::string Graph::find_all_paths(const std::string& start, const std::string& e
     return ss.str();
 }
 
-int Graph::count_fanin_gates(const std::string& name) {
+int Graph::count_fanin_gates(const std::string& name, bool stop_at_dff) {
     if (nodes.find(name) == nodes.end()) return 0;
     std::unordered_set<Node*> visited;
-    return count_fanin_gates_recursive(nodes[name], visited);
+    return count_fanin_gates_recursive(nodes[name], visited, stop_at_dff);
 }
 
-int Graph::count_fanout_gates(const std::string& name) {
+int Graph::count_fanout_gates(const std::string& name, bool stop_at_dff) {
     if (nodes.find(name) == nodes.end()) return 0;
     std::unordered_set<Node*> visited;
-    int total = count_fanout_gates_recursive(nodes[name], visited);
+    int total = count_fanout_gates_recursive(nodes[name], visited, stop_at_dff);
     if (nodes[name]->type == NodeType::GATE) total--;
     return total;
 }
 
-std::string Graph::get_fanin_cone(const std::string& name) {
+std::string Graph::get_fanin_cone(const std::string& name, bool stop_at_dff) {
     if (nodes.find(name) == nodes.end()) return "Error: Node not found.";
     std::unordered_set<Node*> visited;
-    get_cone_recursive(nodes[name], visited, true);
+    get_cone_recursive(nodes[name], visited, true, stop_at_dff);
     std::vector<Node*> gates;
     for (auto n : visited) {
         if (n->type == NodeType::GATE) gates.push_back(n);
     }
     std::stringstream ss;
-    ss << "Transitive Fanin Cone of " << name << " contains " << gates.size() << " gates:\n";
+    if (stop_at_dff)
+        ss << "Combinational fanin cone of " << name << " contains " << gates.size()
+           << " gates (DFF Q treated as primary input; a boundary DFF is included but not traversed):\n";
+    else
+        ss << "Transitive Fanin Cone of " << name << " (through DFFs) contains " << gates.size() << " gates:\n";
     for (auto n : gates) ss << n->name << " ";
     return ss.str();
 }
 
-std::string Graph::get_fanout_cone(const std::string& name) {
+std::string Graph::get_fanout_cone(const std::string& name, bool stop_at_dff) {
     if (nodes.find(name) == nodes.end()) return "Error: Node not found.";
     std::unordered_set<Node*> visited;
-    get_cone_recursive(nodes[name], visited, false);
+    get_cone_recursive(nodes[name], visited, false, stop_at_dff);
     std::vector<Node*> gates;
     for (auto n : visited) {
         if (n->type == NodeType::GATE) gates.push_back(n);
     }
     std::stringstream ss;
-    ss << "Transitive Fanout Cone of " << name << " contains " << gates.size() << " gates:\n";
+    if (stop_at_dff)
+        ss << "Combinational fanout cone of " << name << " contains " << gates.size()
+           << " gates (a consuming DFF is included as the boundary but its Q side is not traversed):\n";
+    else
+        ss << "Transitive Fanout Cone of " << name << " (through DFFs) contains " << gates.size() << " gates:\n";
     for (auto n : gates) ss << n->name << " ";
     return ss.str();
 }
@@ -1448,27 +1456,35 @@ void Graph::stream_paths_recursive(Node* curr, Node* target, Node* avoid, std::v
     path.pop_back();
 }
 
-int Graph::count_fanin_gates_recursive(Node* curr, std::unordered_set<Node*>& visited) {
+int Graph::count_fanin_gates_recursive(Node* curr, std::unordered_set<Node*>& visited, bool stop_at_dff) {
     if (!curr || visited.count(curr)) return 0;
     visited.insert(curr);
     int count = (curr->type == NodeType::GATE) ? 1 : 0;
-    for (auto in : curr->inputs) count += count_fanin_gates_recursive(in, visited);
+    // Combinational boundary: the DFF is counted, its D/CK/RN/SN side is not
+    // entered (Q behaves as a primary input, contest Q&A A21.2).
+    if (stop_at_dff && curr->type == NodeType::GATE && curr->gate_type == GateType::DFF)
+        return count;
+    for (auto in : curr->inputs) count += count_fanin_gates_recursive(in, visited, stop_at_dff);
     return count;
 }
 
-int Graph::count_fanout_gates_recursive(Node* curr, std::unordered_set<Node*>& visited) {
+int Graph::count_fanout_gates_recursive(Node* curr, std::unordered_set<Node*>& visited, bool stop_at_dff) {
     if (!curr || visited.count(curr)) return 0;
     visited.insert(curr);
     int count = (curr->type == NodeType::GATE) ? 1 : 0;
-    for (auto out : curr->outputs) count += count_fanout_gates_recursive(out, visited);
+    if (stop_at_dff && curr->type == NodeType::GATE && curr->gate_type == GateType::DFF)
+        return count;
+    for (auto out : curr->outputs) count += count_fanout_gates_recursive(out, visited, stop_at_dff);
     return count;
 }
 
-void Graph::get_cone_recursive(Node* curr, std::unordered_set<Node*>& visited, bool backward) {
+void Graph::get_cone_recursive(Node* curr, std::unordered_set<Node*>& visited, bool backward, bool stop_at_dff) {
     if (!curr || visited.count(curr)) return;
     visited.insert(curr);
+    if (stop_at_dff && curr->type == NodeType::GATE && curr->gate_type == GateType::DFF)
+        return;
     const auto& next_nodes = backward ? curr->inputs : curr->outputs;
-    for (auto next : next_nodes) get_cone_recursive(next, visited, backward);
+    for (auto next : next_nodes) get_cone_recursive(next, visited, backward, stop_at_dff);
 }
 
 // ── list_pio: JSON-formatted PI/PO listing with vector grouping ─────────────

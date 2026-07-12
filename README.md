@@ -220,7 +220,11 @@ are only graded while the design state still equals the original netlist (turns
 after the first transform are `SKIPPED-STATE`). Numeric mismatches are
 adjudicated against `parser_cpp` before being called wrong: a claim that matches
 the tool's own definition grades `DIVERGENT` (definition difference), not
-`WRONG`. Claim extraction is scoped to the answer, not the whole response:
+`WRONG` — for cone sizes this consults both the combinational default and the
+legacy through-DFF semantics (pre-P2-9 logs), and for PI/PO counts both
+vector-entry and bit-level totals. The oracle's cone walk sees every driver of
+a multi-driven net (dup-Q pathology, e.g. test39/test40), matching the tool.
+Claim extraction is scoped to the answer, not the whole response:
 fanin context ("2 inputs (driven by g2 and g64)", "Direct Fanin: ..." lines) is
 scrubbed before successor/fanout claims are read, an explicit "no immediate
 successors" counts as an empty-list claim, and for yes/no questions a question

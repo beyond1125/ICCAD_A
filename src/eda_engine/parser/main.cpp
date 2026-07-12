@@ -78,15 +78,22 @@ int main(int argc, char** argv) {
                                            int_flag(args, "--trials", 16),
                                            (unsigned)int_flag(args, "--seed", 1)) << std::endl;
     } else if (action == "count_fanin") {
-        int c = g.count_fanin_gates(args["--node"]);
-        std::cout << "Fanin Gates: " << c << std::endl;
+        // Analysis cones are combinational by default (Q&A A21.2): DFF Q = PI,
+        // the boundary DFF counts but is not traversed. --stop_at_dff 0 gives
+        // the legacy through-DFF transitive cone (debug/parity only).
+        bool stop = int_flag(args, "--stop_at_dff", 1) != 0;
+        int c = g.count_fanin_gates(args["--node"], stop);
+        std::cout << (stop ? "Fanin Gates (combinational cone, DFF Q = PI): "
+                           : "Fanin Gates (through DFFs): ") << c << std::endl;
     } else if (action == "count_fanout") {
-        int c = g.count_fanout_gates(args["--node"]);
-        std::cout << "Fanout Gates: " << c << std::endl;
+        bool stop = int_flag(args, "--stop_at_dff", 1) != 0;
+        int c = g.count_fanout_gates(args["--node"], stop);
+        std::cout << (stop ? "Fanout Gates (combinational cone, stops at DFFs): "
+                           : "Fanout Gates (through DFFs): ") << c << std::endl;
     } else if (action == "get_fanin_cone") {
-        std::cout << g.get_fanin_cone(args["--node"]) << std::endl;
+        std::cout << g.get_fanin_cone(args["--node"], int_flag(args, "--stop_at_dff", 1) != 0) << std::endl;
     } else if (action == "get_fanout_cone") {
-        std::cout << g.get_fanout_cone(args["--node"]) << std::endl;
+        std::cout << g.get_fanout_cone(args["--node"], int_flag(args, "--stop_at_dff", 1) != 0) << std::endl;
     } else if (action == "get_fanin_depth") {
         std::cout << "Fanin Depth: " << g.get_fanin_depth(args["--node"]) << std::endl;
     } else if (action == "get_info") {
@@ -266,10 +273,12 @@ int main(int argc, char** argv) {
         if (!args.count("--node")) { std::cout << "Error: --node required\n"; return 1; }
         std::string dir = args.count("--direction") ? args["--direction"] : "fanin";
         bool backward = (dir != "fanout");
+        bool stop_at_dff = int_flag(args, "--stop_at_dff", 1) != 0;
         if (g.nodes.find(args["--node"]) == g.nodes.end()) {
             std::cout << "Error: Node not found.\n"; return 1;
         }
-        // BFS cone traversal
+        // BFS cone traversal; combinational by default (Q&A A21.2): a DFF is
+        // included as the cone boundary but its far side is never entered.
         std::unordered_set<Node*> visited;
         std::queue<Node*> bfsq;
         bfsq.push(g.nodes[args["--node"]]);
@@ -277,6 +286,8 @@ int main(int argc, char** argv) {
             Node* cur = bfsq.front(); bfsq.pop();
             if (visited.count(cur)) continue;
             visited.insert(cur);
+            if (stop_at_dff && cur->type == NodeType::GATE && cur->gate_type == GateType::DFF)
+                continue;
             const auto& nexts = backward ? cur->inputs : cur->outputs;
             for (auto n : nexts) if (!visited.count(n)) bfsq.push(n);
         }
@@ -289,6 +300,9 @@ int main(int argc, char** argv) {
         std::cout << "{\n";
         std::cout << "  \"cone_root\": \"" << args["--node"] << "\",\n";
         std::cout << "  \"direction\": \"" << dir << "\",\n";
+        std::cout << "  \"semantics\": \"" << (stop_at_dff
+                      ? "combinational (DFF Q = PI; boundary DFFs included, not traversed)"
+                      : "transitive through DFFs") << "\",\n";
         std::cout << "  \"total_gates\": " << total_gates << ",\n";
         std::cout << "  \"by_type\": {\n";
         std::vector<GateType> types = {GateType::NOT, GateType::AND, GateType::OR, GateType::XOR, GateType::NOR, GateType::NAND, GateType::XNOR, GateType::BUF, GateType::DFF};

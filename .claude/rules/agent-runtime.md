@@ -44,6 +44,16 @@ Each level must stay strictly under the one above it or a slow inner call
 silently eats the outer budget and the request never gets a chance to answer
 before the grader's own timeout.
 
+## Single-threaded execution (contest Q&A A21.5/6)
+
+The contest allows **one request at a time, single-threaded only**. The
+current architecture complies by construction: the planner executes tool
+calls sequentially, the engine runs one subprocess per action and waits for
+it, and ABC is invoked single-threaded. This is an invariant, not an
+optimization opportunity — do NOT add parallel tool execution, concurrent
+subprocess pools, or multi-threaded C++ actions, even where they would be
+functionally safe.
+
 ## Protocol invariants (src/utils/io_manager.py, main.py)
 
 - Nothing may print to stdout except `IOManager.write_response` — the

@@ -32,10 +32,14 @@ public:
     std::string get_critical_path(const std::string& start, const std::string& end);
     long long count_paths(const std::string& start, const std::string& end, const std::string& avoid = "");
     std::string find_all_paths(const std::string& start, const std::string& end, const std::string& avoid = "", const std::string& paths_out = "");
-    int count_fanin_gates(const std::string& name);
-    int count_fanout_gates(const std::string& name);
-    std::string get_fanin_cone(const std::string& name);
-    std::string get_fanout_cone(const std::string& name);
+    // Analysis cones default to combinational semantics (contest Q&A A21.2):
+    // a boundary DFF is included in the cone but never traversed (fanin stops
+    // at its D/CK/RN/SN pins, fanout stops at its Q). stop_at_dff=false gives
+    // the legacy through-DFF transitive cone (transform-side convention, D4).
+    int count_fanin_gates(const std::string& name, bool stop_at_dff = true);
+    int count_fanout_gates(const std::string& name, bool stop_at_dff = true);
+    std::string get_fanin_cone(const std::string& name, bool stop_at_dff = true);
+    std::string get_fanout_cone(const std::string& name, bool stop_at_dff = true);
     int get_fanin_depth(const std::string& name);
     std::string get_node_info(const std::string& name);
     bool replace_gate(const std::string& target, const std::string& new_type);
@@ -74,9 +78,9 @@ public:
 private:
     void find_all_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, std::vector<std::vector<Node*>>& all_paths, const std::unordered_set<Node*>& can_reach);
     void stream_paths_recursive(Node* curr, Node* target, Node* avoid, std::vector<Node*>& path, const std::unordered_set<Node*>& can_reach, std::ostream& out, long long& found, long long& bytes, std::stringstream& preview);
-    int count_fanin_gates_recursive(Node* curr, std::unordered_set<Node*>& visited);
-    int count_fanout_gates_recursive(Node* curr, std::unordered_set<Node*>& visited);
-    void get_cone_recursive(Node* curr, std::unordered_set<Node*>& visited, bool backward);
+    int count_fanin_gates_recursive(Node* curr, std::unordered_set<Node*>& visited, bool stop_at_dff);
+    int count_fanout_gates_recursive(Node* curr, std::unordered_set<Node*>& visited, bool stop_at_dff);
+    void get_cone_recursive(Node* curr, std::unordered_set<Node*>& visited, bool backward, bool stop_at_dff);
     void run_random_sim(int cycles, int trials, unsigned seed,
                         std::unordered_map<Node*, std::pair<long, long>>& counts);
 };

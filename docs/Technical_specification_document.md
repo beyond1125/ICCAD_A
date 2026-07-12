@@ -192,9 +192,9 @@
 | `analyze_critical_path` | `start_node`, `end_node` |
 | `find_paths` | `start_node`, `end_node`, `avoid_node?` |
 | `count_gates` | — |
-| `count_fanin_gates` / `count_fanout_gates` | `node_name`（**transitive** cone — all gates reachable up/downstream; NOT direct loads. 見 §6.1 2026-07-07 條目） |
-| `get_fanin_cone` / `get_fanout_cone` | `node_name` |
-| `count_gates_in_cone` | `node_name`, `direction?` |
+| `count_fanin_gates` / `count_fanout_gates` | `node_name`（**組合** transitive cone — 停在 DFF 邊界,邊界 DFF 計入不穿越(A21.2,P2-9 2026-07-12);NOT direct loads,見 §6.1 2026-07-07 條目;C++ `--stop_at_dff 0` 給舊穿越式語意,LLM 不暴露） |
+| `get_fanin_cone` / `get_fanout_cone` | `node_name`（組合 cone,同上;輸出字串已標示語意） |
+| `count_gates_in_cone` | `node_name`, `direction?`（組合 cone,同上;JSON 多 `semantics` 欄位） |
 | `get_fanin_depth` | `node_name` |
 | `get_node_info` | `node_name`（回報**直接** fanin/fanout：Fanin count、Input drivers、Fanout count、Driven gates/immediate successors；非遞移錐） |
 | `list_gates_by_type` | `gate_type` |
@@ -252,6 +252,7 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 | 關鍵路徑貪婪回溯 | `graph.cpp:139-173` | O(V+E) + O(路徑長度×平均扇入) | 由層級值反向挑選最大前驅重建關鍵路徑 |
 | 路徑計數 DP | `graph.cpp:175-200` | O(V+E) | 沿拓撲序累加路徑數，不枚舉路徑本身 |
 | 路徑枚舉 DFS（目標可達性剪枝 + 流式落檔/上限） | `graph.cpp` `find_all_paths` | O(V+E) 反向 BFS + O(路徑數×路徑長)；`--paths_out` 流式模式資源上限 10^6 條/512MB，無旗標舊模式收集上限 10000 條 | 枚舉 start→end 路徑；先以反向 BFS 標記可達目標的子圖再 DFS。`--paths_out <file>` 時逐條流式寫檔（不進記憶體），檔案為完整枚舉（A16），stdout 僅印精確總數 + 前 100 條預覽；資源上限觸頂時 header 標註 INCOMPLETE 並附 DP 精確總數。無旗標時維持 10000 條收集上限 + DP 附註 |
+| 分析 cone 遍歷（組合語意,A21.2） | `graph.cpp` `count_fanin_gates_recursive`/`count_fanout_gates_recursive`/`get_cone_recursive`；`main.cpp` `count_gates_in_cone` BFS | O(V+E) | 分析類 cone 預設停在 DFF 邊界:邊界 DFF 計入 cone 但不穿越（fanin 不進 D/CK/RN/SN,fanout 不出 Q）,與 oracle `fanin_cone_gates(through_dff=False)` 對齊（P2-9,2026-07-12）。`--stop_at_dff 0` 保留舊穿越式（debug/parity 用）;transform cone（`fanin_cone_gates`,見基底重映射列）仍穿越 DFF（D4） |
 | 緩衝樹插入（平衡分批） | `graph.cpp:513-623` | O(扇出數)（樹狀分層近似 O(n log n)） | 限制扇出，含控制腳（pin_conn）扇出再加強 |
 | 基底重映射（布林恆等式 + 反閘共用） | `graph.cpp:1224-1306` | O(cone 大小) | 全域/錐狀邏輯轉換為 `nor_not`/`and_not`/`nand_not` 基底 |
 | XOR→4-NAND 分解 | `graph.cpp:682-746`（`decompose_in_cone`） | O(1) 每閘 | 點狀單一閘型別到目標基底的精確結構轉換 |
@@ -347,6 +348,7 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 - **`find_paths` 0 條結果被誤答為「存在路徑」**（已修復，2026-07-07，官方 Q&A P1-5）：`EDAEngine.find_paths`（`engine.py`）在 C++ 回傳 `"No paths found."` 時，現在會把結論前置為 `"ANSWER: NO — No paths found."` 再回傳給 LLM，讓「路徑是否存在」類問題的判定直接寫在工具輸出裡，避免小模型無視 0 條結果、自行捏造「是」的回答（test13/test16 曾各出現此錯誤）。`planner.py` KEY RULES 同步加入明文規則。
 - **時序 BLIF 匯出忽略 DFF RN/SN 控制腳**（設計邊界，2026-07-12 明文化）：`write_seq_blif` 的 `.latch` 模型（供 check_const 的 ABC scleanup/pdr 時序通道）與 `run_random_sim`、flop-cut `write_blif` 採同一慣例——DFF 的 RN/SN/CK 控制腳不進模型，時序語意為「初始態 0、每拍 Q←D」。這不是新增的健全性缺口（專案宣告的時序語意即如此,A21.1），但凡引用時序證明結果時必須連同此邊界一併陳述（check_const 的回答字串已內建此聲明）。同場修復:check_const 尾端的 flop-cut SAT 對（`can_be_1`/`can_be_0`）原本不受 110s 預算夾制,時序通道加入後可能推整體超時,現一律 `min(_SAT_TIMEOUT_S, 剩餘預算)`——被餓死的 SAT 回 None,回報為 INCONCLUSIVE,絕不當證明。
 - **`find_paths` 落檔內容不完整**（已修復，2026-07-11，官方 Q&A A16/A21.3，P1-3）：舊實作把 C++ 的 stdout 原文（僅含前 ~101 條預覽）寫進 `paths_*.log`，同時 C++ 收集階段另有 10000 條上限——「完整清單寫入檔案」的宣稱實際上不成立。現在 `EDAEngine.find_paths` 一律以 session 暫存檔呼叫 `list_paths --paths_out`，C++ **逐條流式寫檔**；超過 `_PATH_FILE_THRESHOLD = 50` 條時把完整檔案 `shutil.move` 到測資目錄並回傳 `saved_to_file` 摘要（含 `file_contents` 完整性標註），較小結果則回傳 inline 原文並丟棄暫存檔。同時修復 header 判讀 regex：舊 regex `Found\s+(\d+)\s+paths?:` 在 capped header（`Found 10000 paths (enumeration capped ...)：`）上不匹配，會退化成數預覽行數（~101）——現在優先讀 `exact total by DP: N`、再讀 `Found N paths`。C++ 資源上限觸頂時（10^6 條/512MB）摘要的 `file_contents` 明示 INCOMPLETE。
+- **分析 cone 穿越 DFF 與官方語意不符**（已對齊，2026-07-12，官方 Q&A A21.2，P2-9）：五個分析 action（`count_fanin`/`count_fanout`/`get_fanin_cone`/`get_fanout_cone`/`count_gates_in_cone`）原沿用 transform 慣例穿越 DFF（且會沿 CK/RN/SN 爬進時鐘/重置樹），暫存器輸出的「fanin cone 幾個閘」會答出整個上游時序邏輯(test26 n10:1496)而非官方的組合語意(1:僅邊界 flop)。現預設 `--stop_at_dff 1`:邊界 DFF 計入 cone 但不穿越,與 `netlist_oracle.fanin_cone_gates(through_dff=False)` 對齊;輸出字串/JSON 標明語意。**連動**:`check_answers.py` 的 `Fanin/Fanout Gates` 判讀 regex 改為容忍括號註記（`Fanin Gates(?:\s*\([^)]*\))?:`,§6.1 2026-07-07 條目所述舊 regex 已失效）,且 cone 尺寸類的 `adjudicate_numeric` 會同時查兩種語意——舊 log 中忠實回報穿越式計數的答案分級 DIVERGENT（定義差異）而非 WRONG。transform cone（`Graph::fanin_cone_gates`,供 `convert_cone_to_basis` 等）依 D4 理由維持穿越,等價性由 cec 把關。
 
 ---
 

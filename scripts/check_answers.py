@@ -605,18 +605,34 @@ def adjudicate_numeric(vfile: Path, qtype: str, params: Dict[str, str],
         elif qtype == "global_max_depth":
             out = _run_parser_cpp(vfile, "calc_depth", end="")
             m = None  # global depth needs a PO scan; skip parser_cpp adjudication
-        elif qtype == "fanin_cone_size":
-            out = _run_parser_cpp(vfile, "count_fanin", node=params.get("node"))
-            m = re.search(r"Fanin Gates:\s*(-?\d+)", out)
-        elif qtype == "fanout_cone_size":
-            out = _run_parser_cpp(vfile, "count_fanout", node=params.get("node"))
-            m = re.search(r"Fanout Gates:\s*(-?\d+)", out)
+        elif qtype in ("fanin_cone_size", "fanout_cone_size"):
+            # count_fanin/count_fanout print a parenthesized semantics note
+            # since P2-9 ("Fanin Gates (combinational cone, DFF Q = PI): N").
+            # The default is the combinational cone (= the oracle, so a claim
+            # matching it never reaches adjudication); also consult the legacy
+            # through-DFF cone (--stop_at_dff 0) so answers from pre-P2-9 logs
+            # grade DIVERGENT (definition difference), not WRONG.
+            action = "count_fanin" if qtype == "fanin_cone_size" else "count_fanout"
+            label = "Fanin" if qtype == "fanin_cone_size" else "Fanout"
+            for stop in (1, 0):
+                out = _run_parser_cpp(vfile, action, node=params.get("node"),
+                                      stop_at_dff=stop)
+                m = re.search(label + r" Gates(?:\s*\([^)]*\))?:\s*(-?\d+)", out)
+                if m and _clean_int(m.group(1)) == claim:
+                    return "DIVERGENT"
+            return "WRONG"
         elif qtype == "fanout_count":
             # "gates driven by X" is ambiguous: direct loads (oracle) vs the
             # transitive fanout cone. If the claim matches the transitive
-            # count, grade it DIVERGENT (definition choice), not WRONG.
-            out = _run_parser_cpp(vfile, "count_fanout", node=params.get("node"))
-            m = re.search(r"Fanout Gates:\s*(-?\d+)", out)
+            # count (either semantics), grade it DIVERGENT (definition
+            # choice), not WRONG.
+            for stop in (1, 0):
+                out = _run_parser_cpp(vfile, "count_fanout",
+                                      node=params.get("node"), stop_at_dff=stop)
+                m = re.search(r"Fanout Gates(?:\s*\([^)]*\))?:\s*(-?\d+)", out)
+                if m and _clean_int(m.group(1)) == claim:
+                    return "DIVERGENT"
+            return "WRONG"
         elif qtype in ("pi_to_dff_depth",):
             out = _run_parser_cpp(vfile, "max_pi_to_dff_depth")
             m = re.search(r"(-?\d+)", out)
@@ -788,6 +804,13 @@ def grade_turn(turn: int, qtype: str, params: Dict[str, str], answer: str,
         if qtype == "pio_count":
             pio = oracle.list_pio(nl)
             n_in, n_out = len(pio["inputs"]), len(pio["outputs"])
+            # bit-level totals: the tool's list_pio reports pi_count/po_count
+            # as individual bit signals (a [31:0] bus = 32 PIs), the oracle
+            # entries group vectors. A claim on either definition is a
+            # definition choice, not an error (test32 t5: 4o-mini answered
+            # the tool's 57/244 vs entry-level 12/17 -> was graded WRONG).
+            b_in = sum(w for _, w in pio["inputs"])
+            b_out = sum(w for _, w in pio["outputs"])
             m = re.search(r"(" + _NUM + r")\s+primary input", answer, re.I)
             m2 = re.search(r"(" + _NUM + r")\s+primary output", answer, re.I)
             claim_in = _clean_int(m.group(1)) if m else None
@@ -795,9 +818,15 @@ def grade_turn(turn: int, qtype: str, params: Dict[str, str], answer: str,
             if claim_in is None or claim_out is None:
                 return TurnResult(turn, qtype, params, "UNVERIFIED",
                                    f"oracle inputs={n_in} outputs={n_out}")
-            verdict = "CORRECT" if (claim_in, claim_out) == (n_in, n_out) else "WRONG"
+            claim = (claim_in, claim_out)
+            if claim == (n_in, n_out):
+                verdict = "CORRECT"
+            elif claim == (b_in, b_out):
+                verdict = "DIVERGENT"
+            else:
+                verdict = "WRONG"
             return TurnResult(turn, qtype, params, verdict,
-                               f"claim=({claim_in},{claim_out}) oracle=({n_in},{n_out})")
+                               f"claim={claim} oracle entries=({n_in},{n_out}) bits=({b_in},{b_out})")
 
         if qtype == "pio_list":
             return TurnResult(turn, qtype, params, "UNVERIFIED-TYPE",

@@ -69,6 +69,16 @@ output. Verified to give the intended non-empty result and stay equivalent.
 **Risk:** the transitive cone can be large (crosses register stages); a grader expecting only the
 immediate D-logic stage would see more gates converted than expected. Functionally safe either way.
 
+> **官方裁決(2026-07-03 Q&A A21.2,落地 2026-07-12 P2-9)**:分析類 cone
+> 問題以**組合 cone** 作答 — DFF Q 視為 primary input,邊界 DFF 本身屬於
+> cone 但不穿越(fanin 不進 D/CK/RN/SN,fanout 不出 Q)。引擎的分析工具
+> (`count_fanin`/`count_fanout`/`get_fanin_cone`/`get_fanout_cone`/
+> `count_gates_in_cone`)已改為此預設(C++ `--stop_at_dff`,預設 1),與
+> oracle `fanin_cone_gates(through_dff=False)` 對齊。本節描述的穿越式
+> 遍歷**僅保留給 transform cone**(`convert_cone_to_basis`/
+> `decompose_gates_in_cone`/`remap_cone`)— 等價性安全,且對暫存器輸出
+> 的 cone 轉換給出預期的非空結果(test25/26 的本意)。
+
 ### D5 — "Restructure nX to target depth 4 / report original if already optimal" ⚠️
 **Testcases:** test26 (n10), and similar in test27 (n15), test28 (n9), test29/30 (n8)
 **Issue:** these always follow a global `reduce_depth`, so the design is already depth-minimized;
@@ -100,6 +110,11 @@ register boundary is 0. So `restructure_to_depth("n10", 4)` reports "depth 0, al
   want to measure the D-net depth instead.
 - **To confirm:** for "depth of nX" where nX is registered, does the grader want combinational
   depth (0) or the next-state/D-logic depth?
+
+> **官方裁決(2026-07-03 Q&A A21.2)**:確認本節預設 — cone/深度僅計
+> 組合邏輯,DFF Q 視為 primary input,暫存器輸出深度 0 是正確解讀。
+> 引擎與 oracle 在深度上原已對齊;分析 cone 的同語意對齊於 2026-07-12
+> P2-9 完成(見 D4 註記)。
 
 ### O2 — Exact-count decompositions ❓
 **Testcases:** test35/test39 ("convert every XOR to an equivalent **4-NAND** circuit"),

@@ -78,10 +78,16 @@ class Netlist:
     gates: List[Gate]
     inputs: Set[str]                       # PI bit-level names (buses expanded)
     outputs: Set[str]                      # PO bit-level names
-    driver: Dict[str, Gate]                # net -> driving gate
+    driver: Dict[str, Gate]                # net -> driving gate (last wins on
+                                           # multi-driven nets, matching
+                                           # run_random_sim / write_seq_blif)
     loads: Dict[str, List[Gate]]           # net -> consuming gates (any pin)
     input_ports: List[Tuple[str, int]] = field(default_factory=list)   # (base, width)
     output_ports: List[Tuple[str, int]] = field(default_factory=list)  # (base, width)
+    # ALL gates driving each net: some netlists wire two DFF Qs to one net
+    # (96 such nets in test39, 2 sampled in test40). Structural cone queries
+    # must see every driver; simulation-flavored queries keep last-wins.
+    drivers: Dict[str, List[Gate]] = field(default_factory=dict)
 
 
 _RE_PRIM = re.compile(
@@ -144,12 +150,15 @@ def parse_netlist(path: Path) -> Netlist:
 
     driver: Dict[str, Gate] = {}
     loads: Dict[str, List[Gate]] = defaultdict(list)
+    drivers: Dict[str, List[Gate]] = defaultdict(list)
     for g in gates:
         if g.output:
             driver[g.output] = g
+            drivers[g.output].append(g)
         for n in g.inputs:
             loads[n].append(g)
-    return Netlist(gates, inputs, outputs, driver, loads, input_ports, output_ports)
+    return Netlist(gates, inputs, outputs, driver, loads, input_ports, output_ports,
+                   drivers)
 
 
 # ── name matching helper for "avoid X" (X may be a gate OR a net name) ──────
@@ -207,13 +216,13 @@ def fanin_cone_gates(nl: Netlist, net: str, through_dff: bool = False) -> Set[st
         if n in seen:
             continue
         seen.add(n)
-        g = nl.driver.get(n)
-        if g is None:
-            continue
-        out.add(g.name)
-        if g.gtype == "dff" and not through_dff:
-            continue
-        stack.extend(g.inputs)
+        # every gate driving the net belongs to the structural cone — a few
+        # netlists wire two DFF Qs to one net (dup-Q, e.g. test39/test40)
+        for g in nl.drivers.get(n, ()):
+            out.add(g.name)
+            if g.gtype == "dff" and not through_dff:
+                continue
+            stack.extend(g.inputs)
     return out
 
 

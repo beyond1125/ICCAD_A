@@ -326,24 +326,29 @@ class EDAEngine:
             return os.path.dirname(self._loaded_filepath)
         return None
 
+    # Analysis cones are COMBINATIONAL (contest Q&A A21.2): DFF Q pins act as
+    # primary inputs, a boundary DFF belongs to the cone but is never traversed.
+    # The transform-side cone (convert_cone_to_basis etc., C++
+    # fanin_cone_gates) still walks through DFFs — docs/OPEN_QUESTIONS.md D4.
+
     def count_fanin_gates(self, node_name: str) -> str:
-        """Count gates in the fanin cone of a specific node."""
+        """Count gates in the combinational fanin cone of a specific node."""
         return self._run_action("count_fanin", node=node_name)
 
     def count_fanout_gates(self, node_name: str) -> str:
-        """Count gates in the transitive fanout cone of a specific node."""
+        """Count gates in the combinational fanout cone of a specific node."""
         return self._run_action("count_fanout", node=node_name)
 
     def get_fanin_cone(self, node_name: str) -> str:
-        """Return all nodes in the transitive fanin cone of a specific node."""
+        """Return all nodes in the combinational fanin cone of a specific node."""
         return self._run_action("get_fanin_cone", node=node_name)
 
     def get_fanout_cone(self, node_name: str) -> str:
-        """Return all nodes in the transitive fanout cone of a specific node."""
+        """Return all nodes in the combinational fanout cone of a specific node."""
         return self._run_action("get_fanout_cone", node=node_name)
 
     def count_gates_in_cone(self, node_name: str, direction: str = "fanin") -> str:
-        """Count gates by type within the fanin or fanout cone of a node."""
+        """Count gates by type within the combinational fanin/fanout cone of a node."""
         return self._run_action("count_gates_in_cone", node=node_name, direction=direction)
 
     def get_fanin_depth(self, node_name: str) -> str:

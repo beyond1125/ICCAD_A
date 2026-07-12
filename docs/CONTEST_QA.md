@@ -45,10 +45,10 @@
 | # | 官方裁決 | 對既有決策的影響 |
 |---|---|---|
 | A21.1 | 「constant」= **功能恆定**(對所有輸入可證恆 0/1);**DFF 初始態 = 0**,X 忽略 | **推翻 O6 的結構性解讀** — **✓ 已完成(P1-8,2026-07-11)**:新 `check_const` 工具(模擬見證 + ABC SAT 證明 + DFF-init-0 定點)回答 always-0/1 類問題;`const_propagate` 加 `semantics='functional'` 供 const 報告/化簡題;僅組合可證恆定會被綁定傳播(flop-cut cec 安全) |
-| A21.2 | cone/深度 = **僅組合邏輯**,DFF.Q 視為 primary input | **確認 O1**(深度 flop 邊界 ✓,引擎與 oracle 已對齊);**挑戰 D4** — 分析類 cone 問題應以組合 cone 作答(oracle 已是此預設 ✓,引擎的 cone 分析工具穿越 DFF,需對齊,PLAN P2-9);transform 用的穿越式 cone 因等價性安全暫維持 |
+| A21.2 | cone/深度 = **僅組合邏輯**,DFF.Q 視為 primary input | **確認 O1**(深度 flop 邊界 ✓);**✓ 已完成(P2-9,2026-07-12)**:引擎五個 cone 分析工具(count_fanin/count_fanout/get_fanin_cone/get_fanout_cone/count_gates_in_cone)改為組合語意預設(C++ `--stop_at_dff`,邊界 DFF 計入不穿越),與 oracle 對齊;transform 用的穿越式 cone 依 D4 理由維持(等價性安全) |
 | A21.3 | complete enumeration = **逐條列出**;超大結果寫檔 + 回應附路徑 | 與 A16 一致,P1-3(流式落檔完整枚舉)**✓ 已完成(2026-07-11)** |
 | A21.4 | 功能等價是主要評分;次要指標會在 prompt 明示;多種合法改寫時 prompt 會指明優化準則 | 等價優先架構 ✓;cost 逐題讀 prompt(同 A8/A9) |
-| A21.5/6 | **只允許單執行緒、一次一個請求**;rate limit 依模型政策、無 token 上限;60s/300s;硬體看 TSRI 規格 | 現行架構已合規(planner 順序執行、subprocess 依序、ABC 單執行緒);**不變量:未來不得加平行工具執行**(記入 agent-runtime 規則,PLAN P2-9 一併) |
+| A21.5/6 | **只允許單執行緒、一次一個請求**;rate limit 依模型政策、無 token 上限;60s/300s;硬體看 TSRI 規格 | 現行架構已合規(planner 順序執行、subprocess 依序、ABC 單執行緒);**✓ 不變量已記入 `.claude/rules/agent-runtime.md`(P2-9,2026-07-12)**:未來不得加平行工具執行 |
 
 **維護規則**:官方釋出新版 QA 時,更新本檔並在 PLAN/OPEN_QUESTIONS 同步標註;
 本檔結論與程式行為衝突時,依 `.claude/rules/docs-sync.md` 的紀律同 commit 修正。
