@@ -220,7 +220,13 @@ are only graded while the design state still equals the original netlist (turns
 after the first transform are `SKIPPED-STATE`). Numeric mismatches are
 adjudicated against `parser_cpp` before being called wrong: a claim that matches
 the tool's own definition grades `DIVERGENT` (definition difference), not
-`WRONG`. Exits non-zero if any graded turn is `WRONG`.
+`WRONG`. Claim extraction is scoped to the answer, not the whole response:
+fanin context ("2 inputs (driven by g2 and g64)", "Direct Fanin: ..." lines) is
+scrubbed before successor/fanout claims are read, an explicit "no immediate
+successors" counts as an empty-list claim, and for yes/no questions a question
+echo ("to determine if they are equivalent ...") or a hedged verdict ("most
+likely not equivalent") is no claim at all -> `UNVERIFIED`, not a polarity.
+Exits non-zero if any graded turn is `WRONG`.
 
 ```bash
 python3 scripts/check_answers.py --case test18

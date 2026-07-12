@@ -385,13 +385,32 @@ _RE_YES = re.compile(
     r"|(?<!not )(?<!not equivalent)are functionally equivalent"
     r"|(?<!not )are equivalent|always\s+(?:0|1)\s*:?\s*yes|\bis a cut\b", re.I)
 _RE_NO = re.compile(
-    r"\*\*no\b|(?<![a-z])no[,.\b]|are not functionally equivalent|are not equivalent"
+    r"\*\*no\b|(?<![a-z])no[,.\b]"
+    r"|are\s+\**\s*not\s+\**\s*(?:functionally\s+)?\**\s*equivalent"
+    r"|\bnot\s+\**\s*functionally\s+equivalent"
     r"|\bare not\b|does not exist\b|not a cut\b", re.I)
+
+# A question echo ("To determine if they are functionally equivalent, I would
+# need ...") is not a YES claim, and a hedged verdict ("most likely **not
+# functionally equivalent**", "unlikely to be equivalent") is not a claim at
+# all — the agent never committed to a polarity. Both are scrubbed before
+# polling _RE_YES/_RE_NO (test20 turn 15 read claim=True from exactly this).
+_RE_QUESTION_ECHO = re.compile(
+    r"\b(?:if|whether)\s+[^.\n?]{0,60}?\bequivalent\b", re.I)
+_RE_HEDGED_EQUIV = re.compile(
+    r"\b(?:most\s+likely|probably|likely|possibly|presumably|"
+    r"may\s+(?:well\s+)?be|might\s+be|appears?\s+(?:to\s+be\s+)?|"
+    r"seems?\s+(?:to\s+be\s+)?|unlikely\s+(?:to\s+be\s+)?)\s*\**\s*"
+    r"(?:not\s+)?\**\s*(?:functionally\s+)?\**\s*equivalent", re.I)
 
 
 def extract_yes_no(text: str) -> Optional[bool]:
     """Conservative yes/no extraction: UNVERIFIED (None) unless one polarity
-    clearly dominates (both present or neither present -> None)."""
+    clearly dominates (both present or neither present -> None). Question
+    echoes and hedged equivalence verdicts are scrubbed first — neither is a
+    committed claim."""
+    text = _RE_QUESTION_ECHO.sub(" ", text)
+    text = _RE_HEDGED_EQUIV.sub(" ", text)
     yes = bool(_RE_YES.search(text))
     no = bool(_RE_NO.search(text))
     if yes and not no:
@@ -409,7 +428,7 @@ def extract_number_near(text: str, node: Optional[str]) -> Optional[int]:
         node_re = re.escape(node)
         for pat in (
             rf"\*\*{node_re}\*\*[^\d]{{0,40}}{_NUM_STANDALONE}",
-            rf"{node_re}[^\d\n]{{0,40}}?\b(?:is|=|:|has)\b[^\d\n]{{0,25}}{_NUM_STANDALONE}",
+            rf"{node_re}[^\d\n]{{0,40}}?\b(?:is|=|:|has|drives)\b[^\d\n]{{0,25}}{_NUM_STANDALONE}",
             rf"{_NUM_STANDALONE}[^\d\n]{{0,40}}?{node_re}",
         ):
             for m in re.finditer(pat, text, re.I):
@@ -460,9 +479,68 @@ def extract_list_paths_count(text: str) -> Optional[int]:
 
 def extract_node_list(text: str) -> Optional[List[str]]:
     """Best-effort list of gate/net tokens mentioned (bullets, commas, table
-    rows). Used for successors/fanout_count list comparison (set-compare)."""
+    rows). Used for flops_by_clock list comparison (set-compare)."""
     toks = re.findall(r"\b(g\d+|n\d+(?:\[\d+\])?)\b", text)
     return sorted(set(toks)) if toks else None
+
+
+# Answers to successor/fanout questions routinely ALSO describe the queried
+# gate's fanin ("2 inputs (driven by g2 and g64)", "- **Direct Fanin:** ...").
+# Tokens and counts inside that fanin context are not part of the claimed
+# answer; scrub them before extraction so fanin gates aren't graded as
+# claimed successors (false WRONG on test14 t12, test15 t10/t11, test16 t12).
+_GN_TOK = r"(?:g\d+|n\d+(?:\[\d+\])?)"
+_RE_FANIN_LINE = re.compile(r"\bfan-?ins?\b", re.I)
+_RE_FANIN_PAREN = re.compile(
+    r"\([^()]*\b(?:driven\s+by|inputs?|fan-?ins?)\b[^()]*\)", re.I)
+_RE_DRIVEN_BY_SEG = re.compile(
+    r"\bdriven\s+by\s+(?:gates?\s+)?" + _GN_TOK +
+    r"(?:(?:\s*,\s*(?:and\s+)?|\s+and\s+)" + _GN_TOK + r")*", re.I)
+_RE_INPUT_COUNT_SEG = re.compile(r"\b\d+\s*(?:-\s*)?inputs?\b", re.I)
+
+
+def _scrub_fanin_context(text: str, node: Optional[str] = None) -> str:
+    """Drop fanin-describing lines/segments from a successor/fanout answer.
+
+    A "driven by <node>" segment naming ONLY the queried node itself is kept:
+    that's the question echo ("gates driven by g0: ..."), not fanin info."""
+    def _keep_own(m: "re.Match[str]") -> str:
+        toks = set(re.findall(_GN_TOK, m.group(0)))
+        return m.group(0) if (node is not None and toks == {node}) else " "
+
+    out_lines: List[str] = []
+    for line in text.splitlines():
+        if _RE_FANIN_LINE.search(line):
+            continue  # whole line describes fanin
+        line = _RE_FANIN_PAREN.sub(_keep_own, line)
+        line = _RE_DRIVEN_BY_SEG.sub(_keep_own, line)
+        line = _RE_INPUT_COUNT_SEG.sub(" ", line)
+        out_lines.append(line)
+    return "\n".join(out_lines)
+
+
+_RE_EMPTY_SUCC = re.compile(
+    r"\bno\s+(?:immediate\s+|direct\s+)?successors?\b"
+    r"|successors?\s*:?\**\s*:?\s*\**\s*none\b"
+    r"|\bno\s+(?:direct\s+)?fan-?out\b"
+    r"|\bdrives?\s+\**\s*(?:0|zero|no)\b"
+    r"|\bfan-?out(?:\s+count)?\s*(?:[:=]|of|is)?\s*\**\s*0\b"
+    r"|\b0\s+gates?\b"
+    r"|not\s+(?:directly\s+)?connected\s+to\s+any", re.I)
+
+
+def extract_successor_list(text: str, node: Optional[str]) -> Optional[List[str]]:
+    """Claimed immediate successors, scoped: fanin context scrubbed first,
+    the queried node excluded. Returns [] for an explicit "no successors /
+    fanout 0" claim, None when no claim is recognizable at all."""
+    scrubbed = _scrub_fanin_context(text, node)
+    toks = sorted({t for t in re.findall(r"\b(g\d+|n\d+(?:\[\d+\])?)\b", scrubbed)
+                   if t != node})
+    if toks:
+        return toks
+    if _RE_EMPTY_SUCC.search(scrubbed):
+        return []
+    return None
 
 
 # ── verdicts ─────────────────────────────────────────────────────────────
@@ -631,7 +709,7 @@ def grade_turn(turn: int, qtype: str, params: Dict[str, str], answer: str,
         if qtype == "fanout_count":
             node = params.get("node")
             net = _resolve_net(nl, node)
-            claim = extract_number_near(answer, node)
+            claim = extract_number_near(_scrub_fanin_context(answer, node), node)
             ov = len(oracle.fanout_of(nl, net))
             if claim is None:
                 return TurnResult(turn, qtype, params, "UNVERIFIED", f"oracle={ov}, no clean claim")
@@ -642,11 +720,12 @@ def grade_turn(turn: int, qtype: str, params: Dict[str, str], answer: str,
         if qtype == "successors":
             node = params.get("node")
             net = _resolve_net(nl, node)
-            claimed_list = extract_node_list(answer)
+            claimed_list = extract_successor_list(answer, node)
             ov = sorted(oracle.fanout_of(nl, net))
-            if not claimed_list:
+            if claimed_list is None:
                 return TurnResult(turn, qtype, params, "UNVERIFIED", f"oracle={ov}")
-            claimed_set = {t for t in claimed_list if t != node}
+            # the queried gate's own output net can't be its successor either
+            claimed_set = {t for t in claimed_list if t not in (node, net)}
             verdict = "CORRECT" if claimed_set == set(ov) else "WRONG"
             return TurnResult(turn, qtype, params, verdict, f"claim={sorted(claimed_set)} oracle={ov}")
 
@@ -899,6 +978,55 @@ Please write the current design to the output file fixtest_out.v.
 """
 
 
+_FIXTURE_EXTRACT_PROMPT = """This is the beginning of a new testcase. The case name is fixext.
+Please load the design from the file fixext.v located in the directory testcase/fixext/.
+Enumerate the immediate successors of gate g1.
+Enumerate the immediate successors of gate g3.
+Determine the number of gates driven by g3.
+Determine whether signals n1 and n2 are functionally equivalent.
+Determine whether signals n1 and n2 are functionally equivalent.
+Please write the current design to the output file fixext_out.v.
+"""
+
+# Response phrasings copied from real haiku answers (test14 t12, test15
+# t10/t11, test16 t12, test20 t15) that used to trip the extraction.
+_FIXTURE_EXTRACT_LOG = (
+    "#RESPONSE 1\nAcknowledged.\n#END 1\n"
+    "#RESPONSE 2\nLoaded.\n#END 2\n"
+    "#RESPONSE 3\n"
+    "**Immediate Successors of Gate g1:**\n"
+    "\n"
+    "Gate g1 is an AND gate with the following characteristics:\n"
+    "\n"
+    "- **Direct Fanin (inputs):** 2 gates (g2, g4)\n"
+    "- **Direct Fanout (immediate successors):** 1 gate\n"
+    "  - **g3** (NOT gate)\n"
+    "\n"
+    "Gate g1 has exactly 1 immediate successor in the netlist.\n"
+    "#END 3\n"
+    "#RESPONSE 4\n"
+    "**Result:** Gate g3 has **no immediate successors** (fanout count: 0).\n"
+    "\n"
+    "- **Direct Fanin:** 1 input driven by gates g1\n"
+    "- **Immediate Successors:** None\n"
+    "#END 4\n"
+    "#RESPONSE 5\n"
+    "**Result:** Gate g3 drives **0 gates** directly.\n"
+    "\n"
+    "Gate g3 is a NOT gate with 1 input (driven by g1), but it has no direct fanout.\n"
+    "#END 5\n"
+    "#RESPONSE 6\n"
+    "These signals are **structurally distinct**. To determine if they are "
+    "functionally equivalent, I would need deeper analysis; they are most "
+    "likely **not functionally equivalent**.\n"
+    "#END 6\n"
+    "#RESPONSE 7\n"
+    "**No.** Signals n1 and n2 are **not functionally equivalent**.\n"
+    "#END 7\n"
+    "#RESPONSE 8\nWritten.\n#END 8\n"
+)
+
+
 def _selftest() -> int:
     import tempfile
     failures: List[str] = []
@@ -956,6 +1084,49 @@ def _selftest() -> int:
         if not rep3.invalid or "LOG_INVALID" not in rep3.invalid_reason:
             failures.append(f"fixture3 (LLM_ERROR majority): got invalid={rep3.invalid} "
                              f"reason={rep3.invalid_reason!r}")
+
+        # -- fixtures 4-8: over-broad claim extraction artifact classes --
+        # (fanin mentions graded as claimed successors / fanout numbers,
+        # question echoes + hedges graded as equivalence claims; observed on
+        # real logs: test14 t12, test15 t10/t11, test16 t12, test20 t15)
+        case_dir2 = tdp / "fixext"
+        case_dir2.mkdir()
+        (case_dir2 / "fixext.v").write_text(_FIXTURE_V)
+        (case_dir2 / "prompt.txt").write_text(_FIXTURE_EXTRACT_PROMPT)
+        (case_dir2 / "fixext.log").write_text(_FIXTURE_EXTRACT_LOG)
+        rep4 = grade_case(case_dir2, "fixext", abc_path=ABC_BIN)
+        by_turn = {t.turn: t for t in rep4.turns}
+
+        # fixture 4: successors answer also naming fanin gates (g2, g4) —
+        # only the listed successor g3 is the claim.
+        t = by_turn.get(3)
+        if t is None or t.verdict != "CORRECT":
+            failures.append(f"fixture4 (successors w/ fanin mention): got {t}")
+
+        # fixture 5: explicit "no immediate successors" + fanin mention of
+        # g1 -> claim=[] and CORRECT against an empty oracle.
+        t = by_turn.get(4)
+        if t is None or t.verdict != "CORRECT":
+            failures.append(f"fixture5 (explicit empty successors): got {t}")
+
+        # fixture 6: "drives **0 gates**" must win over the fanin phrase
+        # "1 input (driven by g1)" -> claim=0 and CORRECT.
+        t = by_turn.get(5)
+        if t is None or t.verdict != "CORRECT" or "claim=0" not in t.detail:
+            failures.append(f"fixture6 (fanout_count=0 w/ fanin mention): got {t}")
+
+        # fixture 7: hedged equivalence verdict + question echo -> no
+        # committed claim (claim=None), never graded as a yes.
+        t = by_turn.get(6)
+        if t is None or t.verdict != "UNVERIFIED" or "claim=None" not in t.detail:
+            failures.append(f"fixture7 (hedged signal_equiv): got {t}")
+
+        # fixture 8: unhedged "**not functionally equivalent**" -> claim=False
+        # (CORRECT when ABC can compute the oracle, UNVERIFIED without ABC —
+        # never WRONG, never claim=True).
+        t = by_turn.get(7)
+        if t is None or t.verdict == "WRONG" or "claim=False" not in t.detail:
+            failures.append(f"fixture8 (negated signal_equiv): got {t}")
 
     print("=" * 70)
     if failures:
