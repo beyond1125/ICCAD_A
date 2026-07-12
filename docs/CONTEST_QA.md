@@ -13,7 +13,7 @@
 | A5.3 | 所有輸入/輸出檔案路徑**相對於工作目錄** | io_manager 的 CWD log ✓ 已合規;但 system prompt 硬編碼 `testcase/<case>/` 路徑指引,對 hidden prompts 危險(P0) |
 | A6.2 | **最終評測有隱藏 prompts**,不要只做文件列舉的工具功能 | 支持既有的泛化方向(任意 basis 分解等);路徑假設必須去硬編碼 |
 | A16 | 「list all X」大結果:**期望完整清單寫入檔案並在回應中給出檔案路徑** | `_truncate_large_result` 的 saved_to_file 設計被官方背書 ✓;`find_all_paths` 的 10k 收集上限已改為 `--paths_out` 流式落檔完整枚舉 **✓ 已完成(P1-3,2026-07-11)**,test14 的 289,366 條實測全數落檔 |
-| A5.6 | 輸入 netlist **可能有 floating / unconnected ports** | 需驗證 parser 容錯(P2);`list_floating` 工具已存在 |
+| A5.6 | 輸入 netlist **可能有 floating / unconnected ports** | **✓ 已驗證(P2-6,2026-07-12)**:4 個合成 fixture(懸空 PI / 未驅動 PO / 未驅動 wire / 向量部分懸空)通過 load、`list_floating` 精確回報、write round-trip 保真、flop-cut BLIF 的 ABC cec 容錯(ABC 對未驅動網補 constant-0 driver);`check_const` 對未驅動網回「CONSTANT 0(undriven)+ floating 註記」對齊 sim/ABC 慣例,對懸空 PI 維持 NOT CONSTANT。常駐測試:`tests/unit_tests/test_floating_ports.py` |
 | A14.2 | 評測**不會**用固定 seed / temperature=0 | 非確定性是常態;多次執行變異性值得量測(P2) |
 
 ## ✓ 確認合規/背書的答覆

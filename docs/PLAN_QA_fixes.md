@@ -3,8 +3,8 @@
 > 狀態:**執行中**(2026-07-07 擬定,依據 docs/CONTEST_QA.md)。
 > 已完成:P1-4 + P1-5(2026-07-07, a979281)、P0-2(2026-07-08, 831c97e)、
 > P0-1(2026-07-08, 4c6d765)、P1-3(2026-07-11)、P1-8(2026-07-11)、
-> P2-9(2026-07-12)。
-> 待做:P2-6、P2-7(可選),收尾全量 sweep + 四層驗證。
+> P2-9(2026-07-12)、P2-6(2026-07-12)。
+> 待做:P2-7(可選),收尾全量 sweep + 四層驗證。
 
 ## P0-1 交付打包改道:廢 Docker、改 TSRI 直跑自包式(A5.1/A6.1)
 
@@ -152,12 +152,19 @@ tool_spec 描述同步說明語意。OPEN_QUESTIONS D4/O1/O6 加官方裁決註�
 transform 題等價性不退步。
 **工作量**:中。
 
-## P2-6 floating/unconnected ports 容錯(A5.6)
+## P2-6 floating/unconnected ports 容錯(A5.6)— ✅ 完成(2026-07-12)
 
-**方案**:造 3 個合成 fixture(懸空輸入、未接輸出 port、未驅動 wire),
-驗證 parser 載入不崩潰、list_floating 正確回報、write 回寫不丟資訊;
-發現問題再修。
-**工作量**:小(測試先行)。
+> 落地紀錄:`tests/unit_tests/test_floating_ports.py`(常駐、有斷言)——
+> 4 個合成 fixture(懸空 PI / 未驅動 PO / 未驅動 wire 餵閘 / [3:0] 向量僅
+> 一 bit 使用)全過:load 不崩潰、`list_floating` 逐項精確(DFF CK/RN 控
+> 制腳正確豁免)、write round-trip PI/PO/閘數與 floating 回報零漂移、
+> flop-cut BLIF 供 ABC cec 可用(ABC 對未驅動網補 constant-0 driver,警告
+> 非錯誤)。**發現並修復一項**:`check_const` 對未驅動網原走 SAT 自由變數
+> 路徑會答 NOT CONSTANT,與 runtime 慣例(run_random_sim 恆 0、ABC tie-0)
+> 矛盾——現在模擬計數 saw0=0∧saw1=0 時查 `list_floating`,未驅動網短路回
+> 「CONSTANT 0(undriven)+ floating 註記」;懸空 PI 仍為自由輸入 NOT
+> CONSTANT。已知可接受損失:宣告但完全未引用的 `wire`(無驅動無消費)被
+> parser 靜默丟棄——電氣上惰性。金絲雀 test02 OK + check_results PASS。
 
 ## P2-7 非確定性變異量測(A14.2)
 

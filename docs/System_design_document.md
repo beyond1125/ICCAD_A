@@ -301,6 +301,7 @@ BLIF（Berkeley Logic Interchange Format）是 Python/C++ 層與 ABC 之間的�
 | per-action timeout 150 秒 | - | test12 的路徑枚舉在特定網表結構下呈指數級展開（`find_all_paths` 無界，見第 10 節） | 150 秒作為子行程強制終止的 OS 層保障，必須嚴格小於外層 270 秒請求預算；`eval_harness.py` 內建 oracle 對同一查詢秒答，證明逾時是引擎演算法設計問題而非查詢本身困難 |
 | context 收縮 | - | test33、test40 曾因網表識別符字元密度（約 2 字元/token）高於一般文字，以樂觀比例估算導致觸發未被攔截的 "prompt too long" 錯誤 | 主動收縮閾值刻意保守（300k 字元）；反應式收縮作為第二道防線，在例外實際發生時以更激進參數強制收縮重試 |
 | rename 優雅失敗 | - | 部分請求要求重新命名的閘會在後續 `reduce_depth` 中被 ABC 重構整個吸收消失，且無論如何重排轉換順序都無法保留該閘的具體命名（`docs/OPEN_QUESTIONS.md` D1） | `rename_node` 誠實回報「not found」而非偽裝成功；功能等價性（主要評分項）不受影響，僅重新命名這個子項可能因評分方式而失分 |
+| floating/undriven 容錯（A5.6） | 2026-07-12 | 官方明示輸入 netlist 可能有 floating/unconnected ports；各引擎對未驅動網的解讀必須一致，否則 const 類回答自相矛盾 | 統一慣例「未驅動 = 0」：run_random_sim 槽位維持 0、ABC cec 自動補 constant-0 driver、`check_const` 對 undriven 網短路回 CONSTANT 0 + floating 註記（不走 SAT 自由變數路徑）；懸空 PI 仍為自由輸入。宣告但完全未引用的 wire 被 parser 靜默丟棄（電氣惰性，接受）。常駐測試 `tests/unit_tests/test_floating_ports.py` |
 
 ---
 

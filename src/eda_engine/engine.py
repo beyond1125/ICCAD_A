@@ -13,6 +13,7 @@ Supported operations (mirrors tool_spec.py):
     replace_gate      - replace a gate type in the design
 """
 
+import json
 import subprocess
 import os
 import re
@@ -1357,6 +1358,29 @@ class EDAEngine:
             )
             cache[net] = res
             return res
+        if s0 == 0 and s1 == 0:
+            # The net exists but the simulator never wrote it: an undriven
+            # (floating) wire (A5.6 — input netlists may contain these). The
+            # SAT path would treat it as a free input and answer "not
+            # constant", contradicting how the rest of the pipeline behaves
+            # (run_random_sim leaves it 0, ABC cec ties non-driven nets to
+            # constant 0), so answer with the convention and say so.
+            flt = self._run_action("list_floating")
+            try:
+                undriven = json.loads(flt).get("undriven_signals", [])
+            except (ValueError, AttributeError):
+                undriven = []
+            if net in undriven:
+                res = (
+                    f"ANSWER: CONSTANT 0 (undriven net) — {net} has no driver: "
+                    f"it is a floating wire, not computed logic. It stays 0 under "
+                    f"the simulation convention and ABC ties non-driven nets to "
+                    f"constant 0. If the question is about connectivity rather "
+                    f"than value, report it as floating/undriven (see "
+                    f"list_floating)."
+                )
+                cache[net] = res
+                return res
         observed = "1" if s1 > 0 else "0"
 
         # ABC sequential channel first: stronger (true reachability semantics,

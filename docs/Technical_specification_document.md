@@ -201,7 +201,7 @@
 | `flipflops_by_clock` | `clock` |
 | `max_pi_to_dff_depth` / `list_floating` / `highest_fanout_pi` / `list_nodes` / `list_pio` / `r2r_paths` / `deepest_cone_output` | — |
 | `signal_depends_on` | `target`, `source` |
-| `check_const` | `net`（功能恆定判定,A21.1:隨機時序模擬找非恆定見證 → **ABC 時序通道**（scleanup 三值模擬證明 → pdr 歸納證明/真時序反例）→ ABC SAT 證恆 0/恆 1,DFF 初始態 0 定點;時序判定僅改變回報內容,絕不進 const_propagate 的 tie 路徑;verdict 快取以 `_loaded_filepath` 為鍵） |
+| `check_const` | `net`（功能恆定判定,A21.1:隨機時序模擬找非恆定見證 → **ABC 時序通道**（scleanup 三值模擬證明 → pdr 歸納證明/真時序反例）→ ABC SAT 證恆 0/恆 1,DFF 初始態 0 定點;時序判定僅改變回報內容,絕不進 const_propagate 的 tie 路徑;verdict 快取以 `_loaded_filepath` 為鍵。**未驅動網短路**(A5.6,P2-6 2026-07-12):模擬計數 saw0=0∧saw1=0 且 `list_floating` 判為 undriven 時,回「CONSTANT 0(undriven)+ floating 註記」對齊 sim/ABC tie-0 慣例,不走 SAT 自由變數路徑;懸空 PI 不受影響(自由輸入,NOT CONSTANT)） |
 
 **TRANSFORM 類（17，改變 `_loaded_filepath` 指向；同集合即 `Planner._TRANSFORM_TOOLS`）**
 
@@ -356,7 +356,7 @@ prompt 要求 LLM 在回覆中提及 `saved_to_file` 路徑。
 
 ### 7.1 測試策略
 
-現況為**誠實的最小可行狀態**：CI 只跑 1 個整合測試（以 deterministic LLM stub 取代真實 API，避免測試耗費 token 與受供應商可用性影響），單元測試腳本存在但無斷言（僅為手動煙霧測試）。真正的功能與品質保證主要落在**系統級評估工具鏈**（四層，見第 5 節工具面規格與 README）：協定完成度（`run_all_llm.py`）、硬性需求（`check_results.py`）、無金標目標導向指標（`eval_harness.py`）、分析類回答正確性（`check_answers.py` + `netlist_oracle.py`）。此外 `netlist_oracle.py --selftest` 與 `check_answers.py --selftest` 提供不依賴真實 testcase 資料的邏輯自我檢查進入點。
+現況為**誠實的最小可行狀態**：CI 只跑 1 個整合測試（以 deterministic LLM stub 取代真實 API，避免測試耗費 token 與受供應商可用性影響），單元測試腳本存在但無斷言（僅為手動煙霧測試）——例外是 `tests/unit_tests/test_floating_ports.py`（P2-6，2026-07-12，有斷言）：4 個 floating/undriven 合成 fixture 驗證 parser 容錯、`list_floating` 精確性、write round-trip 保真、`check_const` 的 undriven／懸空-PI 裁決、ABC cec 對未驅動網的容錯。真正的功能與品質保證主要落在**系統級評估工具鏈**（四層，見第 5 節工具面規格與 README）：協定完成度（`run_all_llm.py`）、硬性需求（`check_results.py`）、無金標目標導向指標（`eval_harness.py`）、分析類回答正確性（`check_answers.py` + `netlist_oracle.py`）。此外 `netlist_oracle.py --selftest` 與 `check_answers.py --selftest` 提供不依賴真實 testcase 資料的邏輯自我檢查進入點。
 
 ### 7.2 測試覆蓋率
 
