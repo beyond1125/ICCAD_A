@@ -1,5 +1,5 @@
-#provider: "openai"   # "openai" or "anthropic"
-provider: "anthropic"
+provider: "openai"   # "openai" or "anthropic"
+#provider: "anthropic"
 
 openai:
   api_key: "${OPENAI_API_KEY}"
